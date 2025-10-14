@@ -24,6 +24,12 @@ from binance_tools.get_recent_trades import register_binance_get_recent_trades
 from binance_tools.get_price import register_binance_get_price
 from binance_tools.get_book_ticker import register_binance_get_book_ticker
 from binance_tools.get_avg_price import register_binance_get_avg_price
+from binance_tools.get_open_orders import register_binance_get_open_orders
+from binance_tools.spot_trade_history import register_binance_spot_trade_history
+from binance_tools.spot_market_order import register_binance_spot_market_order
+from binance_tools.spot_limit_order import register_binance_spot_limit_order
+from binance_tools.spot_oco_order import register_binance_spot_oco_order
+from binance_tools.cancel_order import register_binance_cancel_order
 
 load_dotenv(".env")
 
@@ -147,6 +153,12 @@ register_binance_get_recent_trades(mcp, binance_client, CSV_DIR)
 register_binance_get_price(mcp, binance_client, CSV_DIR)
 register_binance_get_book_ticker(mcp, binance_client, CSV_DIR)
 register_binance_get_avg_price(mcp, binance_client, CSV_DIR)
+register_binance_get_open_orders(mcp, binance_client, CSV_DIR)
+register_binance_spot_trade_history(mcp, binance_client, CSV_DIR)
+register_binance_spot_market_order(mcp, binance_client, CSV_DIR)
+register_binance_spot_limit_order(mcp, binance_client, CSV_DIR)
+register_binance_spot_oco_order(mcp, binance_client, CSV_DIR)
+register_binance_cancel_order(mcp, binance_client, CSV_DIR)
 register_py_eval(mcp, CSV_DIR)
 register_tool_notes(mcp, CSV_DIR)
 
