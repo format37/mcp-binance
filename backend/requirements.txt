@@ -1,0 +1,15 @@
+# Web framework and MCP
+fastmcp>=0.6.0
+uvicorn>=0.32.1
+starlette>=0.41.3
+
+# Binance API client
+python-binance>=1.0.19
+
+# Data processing
+pandas>=2.2.3
+numpy>=1.26.4
+
+# Environment and monitoring
+python-dotenv>=1.0.1
+sentry-sdk>=2.19.2

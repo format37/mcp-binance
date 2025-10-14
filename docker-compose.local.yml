@@ -1,0 +1,25 @@
+services:
+  mcp-binance:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.local
+    container_name: mcp-binance-local
+    environment:
+      - PORT=8010
+      - TZ=UTC
+      - MCP_NAME=binance
+      - MCP_REQUIRE_AUTH=false
+      - MCP_ALLOW_URL_TOKENS=true
+    ports:
+      - "8010:8010"
+    volumes:
+      - ./data:/app/data:rw
+      - ./.env.local:/app/.env:ro
+    # restart: unless-stopped
+    networks:
+      - default
+      - mcp-shared
+
+networks:
+  mcp-shared:
+    external: true

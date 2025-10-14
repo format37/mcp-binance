@@ -1,0 +1,6 @@
+.env.production
+.env.local
+prompt.md
+backend/__pycache__/
+examples/
+data/
