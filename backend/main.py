@@ -32,13 +32,55 @@ logger = logging.getLogger(__name__)
 # Initialize Sentry if DSN is provided
 sentry_dsn = os.getenv("SENTRY_DSN")
 if sentry_dsn:
+    from sentry_sdk.integrations.logging import LoggingIntegration
+
     logger.info(f"Initializing Sentry with DSN: {sentry_dsn[:20]}... (truncated for security)")
+
+    # Filter function to exclude noisy logs from Sentry
+    def before_send(event, hint):
+        """Filter out noisy health checks and expected stream disconnection errors from Sentry"""
+        # Filter out health check requests
+        if event.get('logger') == 'uvicorn.access':
+            message = event.get('message', '')
+            if '/health' in message:
+                return None  # Don't send to Sentry
+
+        # Filter out expected stream disconnection errors (ClosedResourceError)
+        # These occur when clients disconnect and are part of normal operation
+        if 'ClosedResourceError' in str(event.get('message', '')):
+            return None  # Don't send to Sentry
+
+        return event
+
+    # Get container name from environment for better tracking
+    container_name = os.getenv("CONTAINER_NAME", "mcp-binance-local")
+
+    # Configure logging integration
+    logging_integration = LoggingIntegration(
+        level=logging.INFO,        # Capture info and above as breadcrumbs
+        event_level=logging.WARNING  # Only send warnings and above as events (issues)
+    )
+
     sentry_sdk.init(
         dsn=sentry_dsn,
+        environment=container_name,
+        send_default_pii=False,  # Don't send PII by default for security
+        # Enable profiling for performance monitoring
+        profiles_sample_rate=1.0,  # Profile 100% of transactions
+        # Enable transaction tracing for performance monitoring
+        traces_sample_rate=1.0,  # Trace 100% of transactions
+        integrations=[logging_integration],
         # Enable logs to be sent to Sentry
-        enable_logs=True,
+        _experiments={
+            "enable_logs": True,
+        },
+        before_send=before_send
     )
-    logger.info("Sentry initialized successfully")
+
+    # Set service tag for easier filtering in Sentry
+    sentry_sdk.set_tag("service", "mcp-binance")
+
+    logger.info(f"Sentry initialized successfully with profiling and tracing (environment: {container_name})")
 else:
     logger.info("Sentry DSN not provided, running without Sentry")
 

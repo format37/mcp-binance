@@ -5,10 +5,12 @@ import uuid
 from mcp_service import format_csv_response
 import pandas as pd
 from binance.client import Client
+from sentry_utils import with_sentry_tracing
 
 logger = logging.getLogger(__name__)
 
 
+@with_sentry_tracing("binance_get_ticker")
 def fetch_ticker(binance_client: Client, symbol: str = 'BTCUSDT') -> pd.DataFrame:
     """
     Fetch 24-hour ticker statistics for a symbol and return as DataFrame.

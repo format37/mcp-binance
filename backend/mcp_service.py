@@ -11,6 +11,7 @@ import traceback
 import signal
 import os
 from contextlib import redirect_stdout, redirect_stderr
+from sentry_utils import with_sentry_tracing
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -202,6 +203,7 @@ Python snippet to load:
 def register_py_eval(local_mcp_instance, csv_dir):
     """Register the py_eval tool for Python code execution"""
     @local_mcp_instance.tool()
+    @with_sentry_tracing("py_eval")
     def py_eval(code: str, timeout_sec: float = 5.0) -> Dict[str, Any]:
         """
         Execute Python code with pandas/numpy pre-loaded and access to CSV folder.
@@ -269,6 +271,7 @@ def register_tool_notes(local_mcp_instance, csv_dir):
     notes_dir.mkdir(parents=True, exist_ok=True)
 
     @local_mcp_instance.tool()
+    @with_sentry_tracing("save_tool_notes")
     def save_tool_notes(tool_name: str, markdown_notes: str) -> str:
         """
         Save usage notes and lessons learned about any MCP tool.
@@ -340,6 +343,7 @@ def register_tool_notes(local_mcp_instance, csv_dir):
             return f"✗ Error saving notes: {str(e)}"
 
     @local_mcp_instance.tool()
+    @with_sentry_tracing("read_tool_notes")
     def read_tool_notes(tool_name: str) -> str:
         """
         Read all historical usage notes for a specific MCP tool.

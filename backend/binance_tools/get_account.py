@@ -6,10 +6,12 @@ from mcp_service import format_csv_response
 import pandas as pd
 from binance.client import Client
 from typing import Optional
+from sentry_utils import with_sentry_tracing
 
 logger = logging.getLogger(__name__)
 
 
+@with_sentry_tracing("binance_get_account")
 def fetch_account(binance_client: Client) -> pd.DataFrame:
     """
     Fetch Binance account information and return as DataFrame.

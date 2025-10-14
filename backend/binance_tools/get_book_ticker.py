@@ -4,10 +4,12 @@ import uuid
 from mcp_service import format_csv_response
 import pandas as pd
 from binance.client import Client
+from sentry_utils import with_sentry_tracing
 
 logger = logging.getLogger(__name__)
 
 
+@with_sentry_tracing("binance_get_book_ticker")
 def fetch_book_ticker(binance_client: Client, symbol: str = 'BTCUSDT') -> pd.DataFrame:
     """
     Fetch order book ticker (best bid/ask) for a symbol and return as DataFrame.

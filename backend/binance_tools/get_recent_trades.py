@@ -5,10 +5,12 @@ import uuid
 from mcp_service import format_csv_response
 import pandas as pd
 from binance.client import Client
+from sentry_utils import with_sentry_tracing
 
 logger = logging.getLogger(__name__)
 
 
+@with_sentry_tracing("binance_get_recent_trades")
 def fetch_recent_trades(binance_client: Client, symbol: str = 'BTCUSDT', limit: int = 100) -> pd.DataFrame:
     """
     Fetch recent trades for a symbol and return as DataFrame.
