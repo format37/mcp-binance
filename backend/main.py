@@ -18,6 +18,12 @@ from binance.client import Client
 from mcp_service import register_py_eval
 from mcp_resources import register_mcp_resources
 from binance_tools.get_account import register_binance_get_account
+from binance_tools.get_ticker import register_binance_get_ticker
+from binance_tools.get_orderbook import register_binance_get_orderbook
+from binance_tools.get_recent_trades import register_binance_get_recent_trades
+from binance_tools.get_price import register_binance_get_price
+from binance_tools.get_book_ticker import register_binance_get_book_ticker
+from binance_tools.get_avg_price import register_binance_get_avg_price
 
 load_dotenv(".env")
 
@@ -93,6 +99,12 @@ register_mcp_resources(mcp, _safe_name)
 
 # Binance MCP tools
 register_binance_get_account(mcp, binance_client, CSV_DIR)
+register_binance_get_ticker(mcp, binance_client, CSV_DIR)
+register_binance_get_orderbook(mcp, binance_client, CSV_DIR)
+register_binance_get_recent_trades(mcp, binance_client, CSV_DIR)
+register_binance_get_price(mcp, binance_client, CSV_DIR)
+register_binance_get_book_ticker(mcp, binance_client, CSV_DIR)
+register_binance_get_avg_price(mcp, binance_client, CSV_DIR)
 register_py_eval(mcp, CSV_DIR)
 
 # Add custom error handling for stream disconnections
