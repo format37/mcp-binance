@@ -30,6 +30,10 @@ from binance_tools.spot_market_order import register_binance_spot_market_order
 from binance_tools.spot_limit_order import register_binance_spot_limit_order
 from binance_tools.spot_oco_order import register_binance_spot_oco_order
 from binance_tools.cancel_order import register_binance_cancel_order
+from binance_tools.set_futures_leverage import register_binance_set_futures_leverage
+from binance_tools.manage_futures_positions import register_binance_manage_futures_positions
+from binance_tools.calculate_liquidation_risk import register_binance_calculate_liquidation_risk
+from binance_tools.calculate_spot_pnl import register_binance_calculate_spot_pnl
 
 load_dotenv(".env")
 
@@ -159,6 +163,10 @@ register_binance_spot_market_order(mcp, binance_client, CSV_DIR)
 register_binance_spot_limit_order(mcp, binance_client, CSV_DIR)
 register_binance_spot_oco_order(mcp, binance_client, CSV_DIR)
 register_binance_cancel_order(mcp, binance_client, CSV_DIR)
+register_binance_set_futures_leverage(mcp, binance_client, CSV_DIR)
+register_binance_manage_futures_positions(mcp, binance_client, CSV_DIR)
+register_binance_calculate_liquidation_risk(mcp, binance_client, CSV_DIR)
+register_binance_calculate_spot_pnl(mcp, binance_client, CSV_DIR)
 register_py_eval(mcp, CSV_DIR)
 register_tool_notes(mcp, CSV_DIR)
 
