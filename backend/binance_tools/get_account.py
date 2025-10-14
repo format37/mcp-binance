@@ -23,10 +23,13 @@ def fetch_account(binance_client: Client) -> pd.DataFrame:
         - free: Available balance for trading
         - locked: Balance locked in open orders
         - total: Total balance (free + locked)
+        - price_usdt: Current price in USDT (None if not available)
+        - value_usdt: Total value in USDT (total * price_usdt, None if price not available)
 
     Note:
         Only returns assets with non-zero balances (where free + locked > 0).
-        Results are sorted by total amount in descending order.
+        Results are sorted by USDT value in descending order, with assets
+        without USDT prices at the end.
     """
     logger.info("Fetching Binance account information")
 
@@ -42,6 +45,24 @@ def fetch_account(binance_client: Client) -> pd.DataFrame:
             f"Can Deposit: {account_info.get('canDeposit')}"
         )
 
+        # Fetch all ticker prices for valuation
+        logger.info("Fetching current prices...")
+        all_tickers = binance_client.get_all_tickers()
+
+        # Build price lookup dictionary for USDT pairs
+        price_map = {}
+        for ticker in all_tickers:
+            symbol = ticker['symbol']
+            # Extract prices for USDT pairs (e.g., BTCUSDT -> BTC)
+            if symbol.endswith('USDT'):
+                asset = symbol[:-4]  # Remove 'USDT' suffix
+                price_map[asset] = Decimal(ticker['price'])
+
+        # USDT itself has a price of 1.0
+        price_map['USDT'] = Decimal('1.0')
+
+        logger.info(f"Built price map for {len(price_map)} assets")
+
         # Get all balances
         balances = account_info.get('balances', [])
 
@@ -53,11 +74,23 @@ def fetch_account(binance_client: Client) -> pd.DataFrame:
 
             # Only include assets with non-zero balance
             if total > 0:
+                asset = balance['asset']
+                # Get USDT price for this asset
+                price_usdt = price_map.get(asset)
+
+                # Calculate value in USDT
+                if price_usdt is not None:
+                    value_usdt = float(total * price_usdt)
+                else:
+                    value_usdt = None
+
                 records.append({
-                    'asset': balance['asset'],
+                    'asset': asset,
                     'free': float(free),
                     'locked': float(locked),
-                    'total': float(total)
+                    'total': float(total),
+                    'price_usdt': float(price_usdt) if price_usdt is not None else None,
+                    'value_usdt': value_usdt
                 })
 
         logger.info(f"Found {len(records)} assets with non-zero balance")
@@ -69,9 +102,12 @@ def fetch_account(binance_client: Client) -> pd.DataFrame:
     # Create DataFrame
     df = pd.DataFrame(records)
 
-    # Sort by total amount (descending)
+    # Sort by USDT value (descending), then by total amount
+    # Put assets without USDT price at the end
     if not df.empty:
-        df = df.sort_values('total', ascending=False).reset_index(drop=True)
+        df['_sort_key'] = df['value_usdt'].fillna(-1)
+        df = df.sort_values('_sort_key', ascending=False).reset_index(drop=True)
+        df = df.drop(columns=['_sort_key'])
 
     logger.info(f"Successfully fetched account data for {len(df)} assets")
 
@@ -83,11 +119,11 @@ def register_binance_get_account(local_mcp_instance, local_binance_client, csv_d
     @local_mcp_instance.tool()
     def binance_get_account() -> str:
         """
-        Fetch Binance account portfolio information and save to CSV file for analysis.
+        Fetch Binance account portfolio information with current prices and save to CSV file for analysis.
 
         This tool retrieves your current Binance account balances including all assets
-        with non-zero amounts (available + locked). The data is saved to a CSV file
-        for detailed analysis using the py_eval tool.
+        with non-zero amounts (available + locked), along with current USDT prices and
+        total values. The data is saved to a CSV file for detailed analysis using the py_eval tool.
 
         Returns:
             str: Formatted response with CSV file info, schema, sample data, and Python snippet to load the file.
@@ -97,30 +133,35 @@ def register_binance_get_account(local_mcp_instance, local_binance_client, csv_d
             - free (float): Available balance that can be used for trading
             - locked (float): Balance currently locked in open orders
             - total (float): Total balance (free + locked)
+            - price_usdt (float): Current price of the asset in USDT (None if not available)
+            - value_usdt (float): Total value in USDT (total * price_usdt, None if price not available)
 
         Account Information:
             This tool accesses READ-ONLY account information and does NOT perform any trades,
             withdrawals, or deposits. It requires API keys with account read permissions.
 
         Use Cases:
+            - Portfolio valuation in USDT
             - Portfolio composition analysis
-            - Asset allocation review
+            - Asset allocation review by value
             - Available balance checks before trading
             - Monitoring locked balances in open orders
             - Historical portfolio snapshots (by saving multiple CSV files over time)
+            - Comparing portfolio value over time
 
         Always use the py_eval tool to analyze the saved CSV file for insights such as:
-            - Total portfolio value calculation (when combined with price data)
-            - Asset diversification metrics
-            - Identifying assets with locked balances
+            - Total portfolio value calculation (sum of value_usdt column)
+            - Asset diversification metrics by value
+            - Identifying largest holdings by USDT value
+            - Assets without USDT pricing (value_usdt is None)
             - Comparing portfolio changes over time
 
         Example usage:
             binance_get_account()
 
         Note:
-            Results are sorted by total amount in descending order, showing your
-            largest holdings first.
+            Results are sorted by USDT value in descending order, showing your
+            most valuable holdings first. Assets without USDT pricing appear at the end.
         """
         logger.info("binance_get_account tool invoked")
 
