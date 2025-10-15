@@ -316,6 +316,9 @@ def register_tool_notes(local_mcp_instance, csv_dir):
         try:
             from datetime import datetime
 
+            # Ensure directory exists (defensive check)
+            notes_dir.mkdir(parents=True, exist_ok=True)
+
             # Sanitize tool name for filename
             safe_tool_name = tool_name.replace("/", "_").replace("\\", "_")
             notes_file = notes_dir / f"{safe_tool_name}.md"

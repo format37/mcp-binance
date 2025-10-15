@@ -151,6 +151,9 @@ Consider including:
         logger.info(f"update_trading_notes tool invoked (append={append})")
 
         try:
+            # Ensure directory exists (defensive check)
+            notes_dir.mkdir(parents=True, exist_ok=True)
+
             timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
             if append and trading_notes_file.exists():

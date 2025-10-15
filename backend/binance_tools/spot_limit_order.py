@@ -6,6 +6,7 @@ from mcp_service import format_csv_response
 import pandas as pd
 from binance.client import Client
 from sentry_utils import with_sentry_tracing
+from binance_tools.validation_helpers import validate_and_adjust_quantity, create_lot_size_error_message
 
 logger = logging.getLogger(__name__)
 
@@ -61,6 +62,18 @@ def execute_limit_order(binance_client: Client, symbol: str, side: str,
         raise ValueError("price must be positive")
 
     try:
+        # Validate and adjust quantity according to LOT_SIZE filter
+        logger.info(f"Validating quantity for {symbol}: {quantity}")
+        adjusted_quantity, error_msg = validate_and_adjust_quantity(binance_client, symbol, quantity)
+
+        if error_msg:
+            logger.error(f"Quantity validation failed: {error_msg}")
+            raise ValueError(error_msg)
+
+        if adjusted_quantity != quantity:
+            logger.info(f"Quantity adjusted from {quantity} to {adjusted_quantity} to meet LOT_SIZE requirements")
+            quantity = adjusted_quantity
+
         # Execute the order
         logger.warning(f"⚠️  PLACING REAL LIMIT ORDER: {side} {quantity} {symbol} @ {price}")
         order = binance_client.order_limit(
@@ -98,8 +111,19 @@ def execute_limit_order(binance_client: Client, symbol: str, side: str,
 
         return df
 
+    except ValueError as e:
+        # Re-raise validation errors as-is
+        logger.error(f"Validation error placing limit order: {e}")
+        raise
     except Exception as e:
+        error_str = str(e)
         logger.error(f"Error placing limit order: {e}")
+
+        # Check if it's a LOT_SIZE error
+        if 'LOT_SIZE' in error_str or '-1013' in error_str:
+            detailed_error = create_lot_size_error_message(symbol, quantity, error_str)
+            raise Exception(detailed_error)
+
         raise
 
 
@@ -118,6 +142,7 @@ def register_binance_spot_limit_order(local_mcp_instance, local_binance_client, 
             symbol (string, required): Trading pair symbol (e.g., 'BTCUSDT', 'ETHUSDT')
             side (string, required): Order side - 'BUY' or 'SELL' (case-insensitive)
             quantity (float, required): Amount of base asset to trade (e.g., 0.001 for 0.001 BTC)
+                Note: Will be auto-adjusted to meet symbol's LOT_SIZE requirements
             price (float, required): Limit price for order execution
             time_in_force (string, optional): Order duration (default: 'GTC')
                 - 'GTC' (Good Till Cancelled): Order stays active until filled or manually cancelled
@@ -176,6 +201,7 @@ def register_binance_spot_limit_order(local_mcp_instance, local_binance_client, 
             - Ensure quantity meets minimum order size requirements
             - Monitor open orders to prevent over-commitment of funds
             - Consider market volatility when setting limit prices
+            - Quantity is automatically validated and adjusted to meet LOT_SIZE requirements
 
         Price Guidance:
             - For BUY orders: Set limit price AT or BELOW current market price

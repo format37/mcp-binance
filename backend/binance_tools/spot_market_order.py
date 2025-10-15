@@ -7,6 +7,7 @@ import pandas as pd
 from binance.client import Client
 from typing import Optional
 from sentry_utils import with_sentry_tracing
+from binance_tools.validation_helpers import validate_and_adjust_quantity, create_lot_size_error_message, format_decimal
 
 logger = logging.getLogger(__name__)
 
@@ -60,6 +61,19 @@ def execute_market_order(binance_client: Client, symbol: str, side: str,
         raise ValueError("Cannot specify both quantity and quote_quantity")
 
     try:
+        # Validate and adjust quantity according to LOT_SIZE filter (only for base quantity, not quote)
+        if quantity:
+            logger.info(f"Validating quantity for {symbol}: {quantity}")
+            adjusted_quantity, error_msg = validate_and_adjust_quantity(binance_client, symbol, quantity)
+
+            if error_msg:
+                logger.error(f"Quantity validation failed: {error_msg}")
+                raise ValueError(error_msg)
+
+            if adjusted_quantity != quantity:
+                logger.info(f"Quantity adjusted from {quantity} to {adjusted_quantity} to meet LOT_SIZE requirements")
+                quantity = adjusted_quantity
+
         # Prepare order parameters
         order_params = {
             'symbol': symbol,
@@ -68,11 +82,13 @@ def execute_market_order(binance_client: Client, symbol: str, side: str,
         }
 
         if quantity:
-            order_params['quantity'] = quantity
-            logger.info(f"Order quantity: {quantity}")
+            # Convert to decimal string to avoid scientific notation (e.g., 0.00009 -> "0.00009" not "9e-05")
+            order_params['quantity'] = format_decimal(quantity)
+            logger.info(f"Order quantity: {quantity} (formatted: {order_params['quantity']})")
         else:
-            order_params['quoteOrderQty'] = quote_quantity
-            logger.info(f"Order quote quantity: {quote_quantity}")
+            # Convert to decimal string to avoid scientific notation
+            order_params['quoteOrderQty'] = format_decimal(quote_quantity)
+            logger.info(f"Order quote quantity: {quote_quantity} (formatted: {order_params['quoteOrderQty']})")
 
         # Execute the order
         logger.warning(f"⚠️  EXECUTING REAL MARKET ORDER: {side} {symbol}")
@@ -115,8 +131,21 @@ def execute_market_order(binance_client: Client, symbol: str, side: str,
 
         return df
 
+    except ValueError as e:
+        # Re-raise validation errors as-is
+        logger.error(f"Validation error executing market order: {e}")
+        raise
     except Exception as e:
+        error_str = str(e)
         logger.error(f"Error executing market order: {e}")
+
+        # Check if it's a LOT_SIZE error
+        if 'LOT_SIZE' in error_str or '-1013' in error_str:
+            # Use the quantity that was attempted
+            attempted_qty = quantity if quantity else 0
+            detailed_error = create_lot_size_error_message(symbol, attempted_qty, error_str)
+            raise Exception(detailed_error)
+
         raise
 
 
@@ -135,7 +164,9 @@ def register_binance_spot_market_order(local_mcp_instance, local_binance_client,
             symbol (string, required): Trading pair symbol (e.g., 'BTCUSDT', 'ETHUSDT')
             side (string, required): Order side - 'BUY' or 'SELL' (case-insensitive)
             quantity (float, optional): Amount of base asset to trade (e.g., 0.001 for 0.001 BTC)
+                Note: Will be auto-adjusted to meet symbol's LOT_SIZE requirements
             quote_quantity (float, optional): Amount of quote asset to spend (BUY orders only, e.g., 100 for $100 USDT)
+                Note: LOT_SIZE validation not applied to quote_quantity
 
         Returns:
             str: Formatted response with CSV file containing order execution details, including
@@ -187,6 +218,7 @@ def register_binance_spot_market_order(local_mcp_instance, local_binance_client,
             - Use limit orders when precise price control is needed
             - Be aware of potential slippage in volatile markets
             - Consider market depth for large orders
+            - Quantity is automatically validated and adjusted to meet LOT_SIZE requirements
 
         Example usage:
             # Buy 0.001 BTC at current market price

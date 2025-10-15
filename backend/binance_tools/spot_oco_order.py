@@ -7,6 +7,7 @@ import pandas as pd
 from binance.client import Client
 from typing import Optional
 from sentry_utils import with_sentry_tracing
+from binance_tools.validation_helpers import validate_and_adjust_quantity, create_lot_size_error_message, format_decimal
 import json
 
 logger = logging.getLogger(__name__)
@@ -15,7 +16,8 @@ logger = logging.getLogger(__name__)
 @with_sentry_tracing("binance_spot_oco_order")
 def execute_oco_order(binance_client: Client, symbol: str, side: str, quantity: float,
                      take_profit_price: float, stop_loss_price: float,
-                     stop_limit_price: Optional[float] = None) -> pd.DataFrame:
+                     stop_limit_price: Optional[float] = None,
+                     time_in_force: str = "GTC") -> pd.DataFrame:
     """
     Execute an OCO (One-Cancels-Other) order on Binance spot market and return as DataFrame.
 
@@ -27,6 +29,7 @@ def execute_oco_order(binance_client: Client, symbol: str, side: str, quantity: 
         take_profit_price: Price for take-profit limit order
         stop_loss_price: Trigger price for stop-loss order
         stop_limit_price: Limit price for stop-loss (optional, defaults to stop_loss_price)
+        time_in_force: Time in force for stop-loss order (default: 'GTC')
 
     Returns:
         DataFrame with OCO order details containing columns:
@@ -38,6 +41,7 @@ def execute_oco_order(binance_client: Client, symbol: str, side: str, quantity: 
 
     Note:
         When one order executes, the other is automatically cancelled.
+        Take-profit order uses LIMIT_MAKER, stop-loss uses STOP_LOSS_LIMIT.
         WARNING: This executes REAL TRADES with REAL MONEY.
     """
     logger.info(f"Placing OCO {side} order for {symbol}")
@@ -60,18 +64,58 @@ def execute_oco_order(binance_client: Client, symbol: str, side: str, quantity: 
     if not stop_limit_price:
         stop_limit_price = stop_loss_price
 
+    # Validate time in force parameter
+    time_in_force = time_in_force.upper()
+    if time_in_force not in ['GTC', 'IOC', 'FOK']:
+        raise ValueError("time_in_force must be 'GTC', 'IOC', or 'FOK'")
+
     try:
-        # Execute the OCO order
+        # Validate and adjust quantity according to LOT_SIZE filter
+        logger.info(f"Validating quantity for {symbol}: {quantity}")
+        adjusted_quantity, error_msg = validate_and_adjust_quantity(binance_client, symbol, quantity)
+
+        if error_msg:
+            logger.error(f"Quantity validation failed: {error_msg}")
+            raise ValueError(error_msg)
+
+        if adjusted_quantity != quantity:
+            logger.info(f"Quantity adjusted from {quantity} to {adjusted_quantity} to meet LOT_SIZE requirements")
+            quantity = adjusted_quantity
+
+        # Execute the OCO order using the new Binance API v3 format
+        # Convert all numeric parameters to decimal strings to avoid scientific notation
+        # (e.g., 0.00009 -> "0.00009" not "9e-05" which Binance rejects)
         logger.warning(f"⚠️  PLACING REAL OCO ORDER: {side} {quantity} {symbol}, TP: {take_profit_price}, SL: {stop_loss_price}")
-        order = binance_client.create_oco_order(
-            symbol=symbol,
-            side=side,
-            quantity=quantity,
-            price=take_profit_price,
-            stopPrice=stop_loss_price,
-            stopLimitPrice=stop_limit_price,
-            stopLimitTimeInForce='GTC'
-        )
+
+        # OCO order structure depends on side:
+        # SELL: Take profit ABOVE current price (LIMIT_MAKER), Stop loss BELOW (STOP_LOSS_LIMIT)
+        # BUY: Take profit BELOW current price (LIMIT_MAKER), Stop loss ABOVE (STOP_LOSS_LIMIT)
+        if side == 'SELL':
+            order = binance_client.create_oco_order(
+                symbol=symbol,
+                side=side,
+                quantity=format_decimal(quantity),
+                aboveType="LIMIT_MAKER",
+                abovePrice=format_decimal(take_profit_price),
+                aboveTimeInForce="GTC",
+                belowType="STOP_LOSS_LIMIT",
+                belowStopPrice=format_decimal(stop_loss_price),
+                belowPrice=format_decimal(stop_limit_price),
+                belowTimeInForce=time_in_force
+            )
+        else:  # BUY
+            order = binance_client.create_oco_order(
+                symbol=symbol,
+                side=side,
+                quantity=format_decimal(quantity),
+                belowType="LIMIT_MAKER",
+                belowPrice=format_decimal(take_profit_price),
+                belowTimeInForce="GTC",
+                aboveType="STOP_LOSS_LIMIT",
+                aboveStopPrice=format_decimal(stop_loss_price),
+                abovePrice=format_decimal(stop_limit_price),
+                aboveTimeInForce=time_in_force
+            )
         logger.info(f"OCO order placed successfully. Order List ID: {order['orderListId']}")
 
         # Extract order details
@@ -105,8 +149,19 @@ def execute_oco_order(binance_client: Client, symbol: str, side: str, quantity: 
 
         return df
 
+    except ValueError as e:
+        # Re-raise validation errors as-is
+        logger.error(f"Validation error placing OCO order: {e}")
+        raise
     except Exception as e:
+        error_str = str(e)
         logger.error(f"Error placing OCO order: {e}")
+
+        # Check if it's a LOT_SIZE error
+        if 'LOT_SIZE' in error_str or '-1013' in error_str:
+            detailed_error = create_lot_size_error_message(symbol, quantity, error_str)
+            raise Exception(detailed_error)
+
         raise
 
 
@@ -114,7 +169,8 @@ def register_binance_spot_oco_order(local_mcp_instance, local_binance_client, cs
     """Register the binance_spot_oco_order tool"""
     @local_mcp_instance.tool()
     def binance_spot_oco_order(symbol: str, side: str, quantity: float, take_profit_price: float,
-                               stop_loss_price: float, stop_limit_price: float = None) -> str:
+                               stop_loss_price: float, stop_limit_price: float = None,
+                               time_in_force: str = "GTC") -> str:
         """
         Place an OCO (One-Cancels-Other) order for advanced risk management and save details to CSV.
 
@@ -131,10 +187,14 @@ def register_binance_spot_oco_order(local_mcp_instance, local_binance_client, cs
             side (string, required): Order side - 'BUY' or 'SELL' (case-insensitive)
                 Typically 'SELL' for exiting long positions with risk management
             quantity (float, required): Amount of base asset to trade (e.g., 0.001 for 0.001 BTC)
+                Note: Will be auto-adjusted to meet symbol's LOT_SIZE requirements
+                Also handles small quantities (e.g., 0.00009) without scientific notation errors
             take_profit_price (float, required): Price for take-profit limit order (profit target)
             stop_loss_price (float, required): Trigger price for stop-loss order (stop loss level)
             stop_limit_price (float, optional): Limit price for stop-loss order (defaults to stop_loss_price)
                 Setting this slightly below stop_loss_price can help ensure execution
+            time_in_force (string, optional): Time in force for stop-loss order (default: 'GTC')
+                Options: 'GTC' (Good Till Cancel), 'IOC' (Immediate or Cancel), 'FOK' (Fill or Kill)
 
         Returns:
             str: Formatted response with CSV file containing OCO order details, including
@@ -149,15 +209,17 @@ def register_binance_spot_oco_order(local_mcp_instance, local_binance_client, cs
             - orders (string): JSON array with details of both orders (take-profit and stop-loss)
 
         OCO Order Structure (for SELL orders):
-            1. Take-Profit Order (LIMIT_MAKER):
+            1. Take-Profit Order (LIMIT_MAKER - automatically set):
                - Executes when price RISES to take_profit_price
                - Secures profit at target price
                - Acts as a sell limit order
+               - No fees as maker order
 
-            2. Stop-Loss Order (STOP_LOSS_LIMIT):
+            2. Stop-Loss Order (STOP_LOSS_LIMIT - automatically set):
                - Triggers when price FALLS to stop_loss_price
                - Limits losses by exiting position
                - Executes as limit order at stop_limit_price
+               - Controlled by time_in_force parameter
 
         Price Relationships (SELL OCO):
             For a SELL OCO order to exit a long position:
@@ -197,6 +259,7 @@ def register_binance_spot_oco_order(local_mcp_instance, local_binance_client, cs
             - Set take_profit_price at realistic technical levels
             - Use stop_limit_price slightly below stop_loss_price for better fill probability
             - Consider market volatility when setting levels
+            - Quantity is automatically validated and adjusted to meet LOT_SIZE requirements
 
         Example usage:
             # SELL OCO: Exit long BTC position with 4% profit target and 2% stop-loss
@@ -255,7 +318,8 @@ def register_binance_spot_oco_order(local_mcp_instance, local_binance_client, cs
                 quantity=quantity,
                 take_profit_price=take_profit_price,
                 stop_loss_price=stop_loss_price,
-                stop_limit_price=stop_limit_price
+                stop_limit_price=stop_limit_price,
+                time_in_force=time_in_force
             )
 
             # Generate filename with unique identifier
