@@ -248,3 +248,117 @@ def format_decimal(value: float) -> str:
         formatted = format(decimal_value, 'f')
 
     return formatted
+
+
+def validate_futures_margin(
+    binance_client: Client,
+    symbol: str,
+    quantity: float,
+    side: str
+) -> Tuple[bool, Optional[str]]:
+    """
+    Validate that sufficient margin is available for a futures order.
+
+    This function performs pre-flight checks to prevent "Margin is insufficient" errors
+    by verifying that the account has enough available balance to place the order.
+
+    Args:
+        binance_client: Initialized Binance Client
+        symbol: Trading pair symbol (e.g., 'BTCUSDT')
+        quantity: Order quantity
+        side: Order side ('BUY' or 'SELL')
+
+    Returns:
+        Tuple of (is_valid, error_message)
+        - If valid: (True, None)
+        - If invalid: (False, detailed_error_message)
+
+    Example:
+        >>> is_valid, error = validate_futures_margin(client, 'BTCUSDT', 0.001, 'BUY')
+        >>> if not is_valid:
+        >>>     print(error)  # Shows required vs available margin
+    """
+    try:
+        # Get current account balance
+        account = binance_client.futures_account()
+        available_balance = Decimal(account['availableBalance'])
+
+        logger.info(f"Futures margin check for {symbol}: Available balance = {available_balance} USDT")
+
+        # Get current mark price for the symbol
+        ticker = binance_client.futures_mark_price(symbol=symbol)
+        mark_price = Decimal(ticker['markPrice'])
+
+        logger.info(f"Current mark price for {symbol}: {mark_price}")
+
+        # Get leverage for this symbol from positions
+        leverage = Decimal('1')  # Default leverage
+        positions = account.get('positions', [])
+        for position in positions:
+            if position.get('symbol') == symbol:
+                leverage = Decimal(position.get('leverage', '1'))
+                break
+
+        logger.info(f"Leverage for {symbol}: {leverage}x")
+
+        # Calculate required margin (notional value / leverage)
+        # Add 5% buffer for fees and price slippage
+        notional_value = Decimal(str(quantity)) * mark_price
+        required_margin = (notional_value / leverage) * Decimal('1.05')
+
+        logger.info(
+            f"Margin calculation for {side} {quantity} {symbol}: "
+            f"Notional={notional_value:.2f} USDT, Required={required_margin:.2f} USDT, "
+            f"Available={available_balance:.2f} USDT"
+        )
+
+        # Validate sufficient balance
+        if available_balance < required_margin:
+            shortfall = required_margin - available_balance
+            error_msg = f"""Insufficient margin for futures order:
+
+Order Details:
+  Symbol:           {symbol}
+  Side:             {side}
+  Quantity:         {quantity}
+  Current Price:    {mark_price:.8f} USDT
+  Leverage:         {leverage}x
+  Notional Value:   {notional_value:.2f} USDT
+
+Margin Requirements:
+  Required Margin:  {required_margin:.2f} USDT (includes 5% buffer for fees)
+  Available:        {available_balance:.2f} USDT
+  Shortfall:        {shortfall:.2f} USDT
+
+Solutions:
+  1. Reduce order quantity (try {float(quantity * 0.8):.8f} or less)
+  2. Increase leverage for {symbol} (use binance_set_futures_leverage)
+  3. Add more funds to futures account
+  4. Close other positions to free up margin
+
+Check your account: binance_get_futures_balances()
+"""
+            return False, error_msg
+
+        # Sufficient margin available
+        margin_buffer = float(((available_balance - required_margin) / required_margin) * 100)
+        logger.info(f"Margin validation passed with {margin_buffer:.1f}% buffer")
+
+        return True, None
+
+    except Exception as e:
+        error_msg = f"""Failed to validate futures margin: {str(e)}
+
+This may be due to:
+- Invalid symbol name
+- Network connectivity issues
+- API permissions not set correctly
+- Futures account not activated
+
+Please verify:
+1. Symbol is correct (e.g., 'BTCUSDT' not 'BTC-USDT')
+2. Futures trading is enabled on your account
+3. API key has futures permissions
+"""
+        logger.error(f"Margin validation error: {e}")
+        return False, error_msg

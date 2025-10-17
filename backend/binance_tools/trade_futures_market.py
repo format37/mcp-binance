@@ -6,6 +6,7 @@ from mcp_service import format_csv_response
 import pandas as pd
 from binance.client import Client
 from sentry_utils import with_sentry_tracing
+from .validation_helpers import validate_futures_margin
 
 logger = logging.getLogger(__name__)
 
@@ -56,6 +57,18 @@ def execute_futures_market_order(binance_client: Client, symbol: str, side: str,
                         break
             if quantity == 0:
                 raise ValueError(f"No open position found for {symbol} {position_side}")
+
+        # Validate margin availability before placing order (unless closing position)
+        if not close_position:
+            is_valid, error_msg = validate_futures_margin(
+                binance_client=binance_client,
+                symbol=symbol,
+                quantity=quantity,
+                side=side
+            )
+            if not is_valid:
+                logger.warning(f"Margin validation failed for {symbol}: {error_msg}")
+                raise ValueError(error_msg)
 
         # Execute the order
         params = {

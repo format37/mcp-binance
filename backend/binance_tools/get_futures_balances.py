@@ -6,27 +6,50 @@ from mcp_service import format_csv_response
 import pandas as pd
 from binance.client import Client
 from sentry_utils import with_sentry_tracing
+import time
 
 logger = logging.getLogger(__name__)
 
+# Simple in-memory cache for rate limiting
+# Format: {'last_call_time': timestamp, 'account_df': df, 'positions_df': df}
+_futures_balances_cache = {'last_call_time': 0, 'account_df': None, 'positions_df': None}
+_CACHE_TTL_SECONDS = 5  # Cache data for 5 seconds
+
 
 @with_sentry_tracing("binance_get_futures_balances")
-def fetch_futures_balances(binance_client: Client) -> tuple[pd.DataFrame, pd.DataFrame]:
+def fetch_futures_balances(binance_client: Client, use_cache: bool = True) -> tuple[pd.DataFrame, pd.DataFrame, bool]:
     """
     Fetch Binance futures account information and return as DataFrames.
 
     Args:
         binance_client: Initialized Binance Client
+        use_cache: If True, uses cached data if available (default: True)
 
     Returns:
-        Tuple of (account_df, positions_df):
+        Tuple of (account_df, positions_df, is_cached):
         - account_df: Account summary with wallet balance, margin, P&L
         - positions_df: Open positions with entry price, liquidation price, P&L
+        - is_cached: True if data came from cache, False if fetched live
 
     Note:
         Futures trading involves liquidation risk. Monitor positions carefully.
+        This function implements a 5-second cache to prevent rate limit errors.
     """
-    logger.info("Fetching Binance futures account information")
+    global _futures_balances_cache
+    current_time = time.time()
+
+    # Check if we can use cached data
+    if use_cache and _futures_balances_cache['account_df'] is not None:
+        time_since_last_call = current_time - _futures_balances_cache['last_call_time']
+        if time_since_last_call < _CACHE_TTL_SECONDS:
+            logger.info(f"Using cached futures balance data (age: {time_since_last_call:.1f}s)")
+            return (
+                _futures_balances_cache['account_df'].copy(),
+                _futures_balances_cache['positions_df'].copy(),
+                True  # is_cached = True
+            )
+
+    logger.info("Fetching Binance futures account information (live)")
 
     try:
         # Fetch account information from Binance API
@@ -113,9 +136,36 @@ def fetch_futures_balances(binance_client: Client) -> tuple[pd.DataFrame, pd.Dat
 
         logger.info(f"Successfully fetched futures account data with {len(position_records)} open positions")
 
-        return account_df, positions_df
+        # Update cache
+        _futures_balances_cache['last_call_time'] = current_time
+        _futures_balances_cache['account_df'] = account_df.copy()
+        _futures_balances_cache['positions_df'] = positions_df.copy()
+
+        return account_df, positions_df, False  # is_cached = False
 
     except Exception as e:
+        error_str = str(e)
+
+        # Check if it's a rate limit error
+        if "429" in error_str or "rate" in error_str.lower() or "too many requests" in error_str.lower():
+            logger.warning(f"Binance rate limit hit: {e}")
+
+            # If we have cached data, return it even if expired
+            if _futures_balances_cache['account_df'] is not None:
+                time_since_last_call = current_time - _futures_balances_cache['last_call_time']
+                logger.info(f"Returning cached data due to rate limit (age: {time_since_last_call:.1f}s)")
+                return (
+                    _futures_balances_cache['account_df'].copy(),
+                    _futures_balances_cache['positions_df'].copy(),
+                    True  # is_cached = True
+                )
+
+            # No cached data available, raise specific rate limit error
+            raise ValueError(
+                f"Binance API rate limit exceeded. Please wait a few seconds before trying again.\n"
+                f"This tool can only be called once every {_CACHE_TTL_SECONDS} seconds to prevent rate limiting."
+            )
+
         logger.error(f"Error fetching futures account data from Binance API: {e}")
         raise
 
@@ -205,7 +255,7 @@ def register_binance_get_futures_balances(local_mcp_instance, local_binance_clie
 
         try:
             # Call fetch_futures_balances function
-            account_df, positions_df = fetch_futures_balances(binance_client=local_binance_client)
+            account_df, positions_df, is_cached = fetch_futures_balances(binance_client=local_binance_client)
 
             # Generate filenames with unique identifier
             uid = str(uuid.uuid4())[:8]
@@ -225,8 +275,11 @@ def register_binance_get_futures_balances(local_mcp_instance, local_binance_clie
             account_response = format_csv_response(account_filepath, account_df)
             positions_response = format_csv_response(positions_filepath, positions_df)
 
+            # Add cache status indicator
+            cache_status = " (CACHED DATA)" if is_cached else " (LIVE DATA)"
+
             result = f"""═══════════════════════════════════════════════════════════════════════════════
-FUTURES ACCOUNT DATA SAVED
+FUTURES ACCOUNT DATA SAVED{cache_status}
 ═══════════════════════════════════════════════════════════════════════════════
 
 File 1: ACCOUNT SUMMARY

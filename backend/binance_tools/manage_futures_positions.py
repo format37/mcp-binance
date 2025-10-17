@@ -37,70 +37,77 @@ def list_futures_positions(binance_client: Client, symbol: Optional[str] = None)
 
         position_records = []
         for position in positions:
-            pos_amt = Decimal(position['positionAmt'])
-            if pos_amt == 0:
-                continue  # Skip zero positions
+            try:
+                pos_amt = Decimal(position.get('positionAmt', '0'))
+                if pos_amt == 0:
+                    continue  # Skip zero positions
 
-            entry_price = Decimal(position['entryPrice'])
-            mark_price = Decimal(position['markPrice'])
-            liquidation_price = Decimal(position['liquidationPrice']) if position['liquidationPrice'] != '0' else None
-            unrealized_pnl = Decimal(position['unRealizedProfit'])
-            leverage = int(position['leverage'])
+                entry_price = Decimal(position.get('entryPrice', '0'))
+                mark_price = Decimal(position.get('markPrice', '0'))
+                liquidation_price_str = position.get('liquidationPrice', '0')
+                liquidation_price = Decimal(liquidation_price_str) if liquidation_price_str != '0' else None
+                unrealized_pnl = Decimal(position.get('unRealizedProfit', '0'))
+                leverage = int(position.get('leverage', 1))
 
-            # Determine direction
-            direction = "LONG" if pos_amt > 0 else "SHORT"
+                # Determine direction
+                direction = "LONG" if pos_amt > 0 else "SHORT"
 
-            # Calculate price change
-            if entry_price > 0:
-                price_change_pct = float(((mark_price - entry_price) / entry_price) * 100)
-            else:
-                price_change_pct = 0.0
-
-            # Calculate liquidation distance
-            if liquidation_price and mark_price > 0:
-                liq_distance_pct = float(abs((liquidation_price - mark_price) / mark_price * 100))
-            else:
-                liq_distance_pct = None
-
-            # Calculate ROI
-            notional = abs(pos_amt * entry_price)
-            margin = notional / leverage if leverage > 0 else notional
-            roi_pct = float((unrealized_pnl / margin) * 100) if margin > 0 else 0.0
-
-            # Risk assessment
-            if liq_distance_pct:
-                if liq_distance_pct < 5:
-                    risk_level = "CRITICAL"
-                elif liq_distance_pct < 10:
-                    risk_level = "HIGH"
-                elif liq_distance_pct < 20:
-                    risk_level = "MEDIUM"
+                # Calculate price change
+                if entry_price > 0:
+                    price_change_pct = float(((mark_price - entry_price) / entry_price) * 100)
                 else:
-                    risk_level = "LOW"
-            else:
-                risk_level = "UNKNOWN"
+                    price_change_pct = 0.0
 
-            position_records.append({
-                'symbol': position['symbol'],
-                'direction': direction,
-                'positionSide': position['positionSide'],
-                'positionAmt': float(pos_amt),
-                'entryPrice': float(entry_price),
-                'markPrice': float(mark_price),
-                'priceChangePct': price_change_pct,
-                'liquidationPrice': float(liquidation_price) if liquidation_price else None,
-                'liqDistancePct': liq_distance_pct,
-                'riskLevel': risk_level,
-                'unRealizedProfit': float(unrealized_pnl),
-                'roiPct': roi_pct,
-                'leverage': leverage,
-                'notionalValue': float(notional),
-                'margin': float(margin),
-                'initialMargin': float(position['initialMargin']),
-                'maintMargin': float(position['maintMargin']),
-                'isolated': position['isolated'],
-                'updateTime': datetime.fromtimestamp(int(position['updateTime']) / 1000).strftime('%Y-%m-%d %H:%M:%S')
-            })
+                # Calculate liquidation distance
+                if liquidation_price and mark_price > 0:
+                    liq_distance_pct = float(abs((liquidation_price - mark_price) / mark_price * 100))
+                else:
+                    liq_distance_pct = None
+
+                # Calculate ROI
+                notional = abs(pos_amt * entry_price)
+                margin = notional / leverage if leverage > 0 else notional
+                roi_pct = float((unrealized_pnl / margin) * 100) if margin > 0 else 0.0
+
+                # Risk assessment
+                if liq_distance_pct:
+                    if liq_distance_pct < 5:
+                        risk_level = "CRITICAL"
+                    elif liq_distance_pct < 10:
+                        risk_level = "HIGH"
+                    elif liq_distance_pct < 20:
+                        risk_level = "MEDIUM"
+                    else:
+                        risk_level = "LOW"
+                else:
+                    risk_level = "UNKNOWN"
+
+                position_records.append({
+                    'symbol': position.get('symbol', 'UNKNOWN'),
+                    'direction': direction,
+                    'positionSide': position.get('positionSide', 'BOTH'),
+                    'positionAmt': float(pos_amt),
+                    'entryPrice': float(entry_price),
+                    'markPrice': float(mark_price),
+                    'priceChangePct': price_change_pct,
+                    'liquidationPrice': float(liquidation_price) if liquidation_price else None,
+                    'liqDistancePct': liq_distance_pct,
+                    'riskLevel': risk_level,
+                    'unRealizedProfit': float(unrealized_pnl),
+                    'roiPct': roi_pct,
+                    'leverage': leverage,
+                    'notionalValue': float(notional),
+                    'margin': float(margin),
+                    'initialMargin': float(position.get('initialMargin', '0')),
+                    'maintMargin': float(position.get('maintMargin', '0')),
+                    'isolated': position.get('isolated', False),
+                    'updateTime': datetime.fromtimestamp(int(position.get('updateTime', 0)) / 1000).strftime('%Y-%m-%d %H:%M:%S') if position.get('updateTime') else 'N/A'
+                })
+
+            except (KeyError, ValueError, TypeError) as e:
+                # Log warning but continue processing other positions
+                logger.warning(f"Failed to parse position data: {e}. Position data: {position}")
+                continue
 
         df = pd.DataFrame(position_records) if position_records else pd.DataFrame(columns=[
             'symbol', 'direction', 'positionSide', 'positionAmt', 'entryPrice', 'markPrice',
