@@ -44,9 +44,7 @@ def fetch_futures_balances(binance_client: Client) -> tuple[pd.DataFrame, pd.Dat
             'canTrade': account.get('canTrade', False),
             'canDeposit': account.get('canDeposit', False),
             'canWithdraw': account.get('canWithdraw', False),
-            'featureSe
-
-t': account.get('featureSet', 'N/A'),
+            'featureSet': account.get('featureSet', 'N/A'),
             'totalWalletBalance': float(account['totalWalletBalance']),
             'totalUnrealizedProfit': float(account['totalUnrealizedProfit']),
             'totalMarginBalance': float(account['totalMarginBalance']),
