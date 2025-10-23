@@ -86,67 +86,98 @@ Consider including:
 
     @local_mcp_instance.tool()
     @with_sentry_tracing("update_trading_notes")
-    def update_trading_notes(markdown_content: str, append: bool = True) -> str:
+    def update_trading_notes(markdown_content: str, append: bool = False) -> str:
         """
-        Update trading strategy and session notes.
+        Update trading strategy and session notes by REWRITING the entire document.
 
-        This tool saves or appends trading strategy information that persists across sessions.
-        Use it to maintain long-term context about your trading approach, current positions,
-        market outlook, and lessons learned.
+        ⚠️ IMPORTANT: This tool REPLACES the entire strategy document by default!
+
+        Any previous content NOT included in markdown_content will be FORGOTTEN.
+        Before calling this tool:
+        1. Call read_trading_notes() to review current notes
+        2. Identify what significant points to retain
+        3. Include ALL important information in your new markdown_content:
+           - Active positions and their rationale
+           - Current trading strategy and goals
+           - Risk management rules that are still relevant
+           - Important lessons learned
+           - Pending action items
+
+        Only mention significant points worth remembering. Minor details from previous
+        sessions can be omitted to keep the document focused and manageable.
 
         Parameters:
-            markdown_content (str): Markdown-formatted trading notes. Should include:
-                - Strategic decisions made and rationale
-                - Position updates (opened/closed positions with reasoning)
-                - Market analysis and outlook changes
-                - Risk management updates
-                - Lessons learned or important observations
+            markdown_content (str): Complete markdown strategy document. Must include:
+                - ALL active positions with rationale and exit criteria
+                - Current trading strategy and market outlook
+                - Risk management rules and limits
+                - Significant lessons learned worth remembering
                 - Action items for next session
+                - Any other important context for decision-making
 
-            append (bool): If True (default), appends content with timestamp.
-                          If False, replaces entire notes file with new content.
+            append (bool): If False (default), REPLACES entire document (prevents file bloat).
+                          If True, appends with timestamp (use only for historical tracking).
 
         Returns:
             str: Confirmation message with timestamp and file location
 
         Use Cases:
-            - After opening a position: Document the trade rationale and exit criteria
-            - After closing a position: Record the outcome and lessons learned
-            - After market analysis: Update outlook and adjust strategy if needed
-            - At end of session: Summarize actions taken and next steps
-            - When changing strategy: Document why the approach is being modified
-            - Risk management: Update exposure limits or risk parameters
+            - Session updates: Rewrite with current positions, strategy, and key learnings
+            - Strategy changes: Document new approach while preserving relevant context
+            - Position management: Update positions list, removing closed trades
+            - Regular cleanup: Keep document focused by dropping obsolete information
 
         Best Practices:
-            - Use append=True for most updates to maintain history
-            - Use append=False only for complete strategy rewrites
+            - ALWAYS call read_trading_notes() first to see what exists
+            - Include only SIGNIFICANT points from previous notes
+            - Drop outdated information (closed positions, obsolete analysis)
+            - Keep the document focused and actionable
+            - Use append=True ONLY if you need to maintain complete history
             - Include specific details: prices, quantities, timeframes
             - Explain the "why" behind decisions, not just "what"
-            - Note what you're monitoring for position management
-            - Flag important learnings or mistakes to avoid repeating
 
         Example usage:
+            # First, read existing notes
+            existing_notes = read_trading_notes()
+
+            # Then rewrite with updated content, keeping significant points
             update_trading_notes(
                 markdown_content=\"\"\"
-                # Position Update: BTC Long
+                # Current Trading Strategy
 
-                **Action:** Opened long BTC position at $42,500
-                **Size:** 0.1 BTC ($4,250 USD)
-                **Rationale:** Strong support at $42k, bullish RSI divergence on 4h chart
-                **Exit Plan:**
-                - Take profit: $45,000 (+5.9%)
-                - Stop loss: $41,000 (-3.5%)
+                ## Active Positions
 
-                **Risk:** 1.5% of portfolio
+                ### BTC Long Position
+                - **Opened:** 2025-01-15 at $42,500
+                - **Size:** 0.1 BTC ($4,250 USD)
+                - **Rationale:** Strong support at $42k, bullish RSI divergence on 4h
+                - **Exit Plan:**
+                  - Take profit: $45,000 (+5.9%)
+                  - Stop loss: $41,000 (-3.5%)
+                - **Risk:** 1.5% of portfolio
+
+                ## Risk Management Rules
+                - Maximum 2% risk per trade
+                - No more than 3 concurrent positions
+                - Daily loss limit: 5% of portfolio
+
+                ## Key Lessons
+                - Don't chase pumps - wait for confirmations
+                - Always set stop losses before entering
+
+                ## Next Session
+                - Monitor BTC for take profit level
+                - Review ETH setup if it breaks $2,300
                 \"\"\",
-                append=True
+                append=False  # Default: replaces entire document
             )
 
         Note:
-            - Each appended update includes a timestamp automatically
-            - Updates are saved immediately to persist across sessions
-            - Use markdown formatting for better readability
-            - Keep notes focused on actionable information and context
+            - This REWRITES the file to prevent unbounded growth
+            - Previous content is DELETED unless you include it in markdown_content
+            - Read existing notes first to decide what to keep
+            - Only retain significant, actionable information
+            - Use markdown formatting for readability
         """
         logger.info(f"update_trading_notes tool invoked (append={append})")
 

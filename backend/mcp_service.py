@@ -206,7 +206,7 @@ def register_py_eval(local_mcp_instance, csv_dir):
     @with_sentry_tracing("py_eval")
     def py_eval(code: str, timeout_sec: float = 5.0) -> Dict[str, Any]:
         """
-        Execute Python code with pandas/numpy pre-loaded and access to CSV folder.
+        Execute Python code with data science, statistics, ML, and financial analysis libraries pre-loaded.
 
         Parameters:
             code (str): Python code to execute
@@ -215,10 +215,57 @@ def register_py_eval(local_mcp_instance, csv_dir):
         Returns:
             dict: Execution results with stdout, stderr, duration_ms, and error info
 
-        Available variables in execution environment:
+        Available libraries in execution environment:
+
+        Data Processing:
             - pd: pandas library
             - np: numpy library
             - CSV_PATH: path to data/mcp-binance folder for reading/writing CSV files
+
+        Plotting & Visualization:
+            - plt: matplotlib.pyplot (for static plots)
+            - plotly: plotly library (for interactive plots)
+            - px: plotly.express (quick interactive charts)
+            - go: plotly.graph_objects (detailed plot customization)
+            - sns: seaborn library (statistical visualization)
+
+        Statistical Analysis & Machine Learning:
+            - scipy: scientific computing library
+            - stats: scipy.stats (statistical functions)
+            - sklearn: scikit-learn (machine learning models, clustering, regression)
+            - sm: statsmodels.api (time series, econometrics, statistical models)
+
+        Financial Analysis:
+            - ta: technical analysis indicators (RSI, MACD, Bollinger Bands, etc.)
+            - empyrical: financial performance metrics (Sharpe ratio, max drawdown, etc.)
+
+        Usage examples:
+
+            # Technical analysis with ta
+            df['rsi'] = ta.momentum.RSIIndicator(df['close']).rsi()
+            df['macd'] = ta.trend.MACD(df['close']).macd()
+
+            # Financial metrics with empyrical
+            returns = df['close'].pct_change()
+            sharpe = empyrical.sharpe_ratio(returns)
+            max_dd = empyrical.max_drawdown(returns)
+
+            # Statistical tests
+            from scipy.stats import normaltest
+            statistic, pvalue = normaltest(returns.dropna())
+
+            # Time series analysis
+            from statsmodels.tsa.seasonal import seasonal_decompose
+            decomposition = seasonal_decompose(df['close'], model='additive', period=24)
+
+            # Machine learning
+            from sklearn.linear_model import LinearRegression
+            model = LinearRegression().fit(X, y)
+
+            # Save plots
+            plt.figure()
+            plt.plot(df['close'])
+            plt.savefig(f'{CSV_PATH}/price_chart.png')
         """
         logger.info(f"py_eval invoked with {len(code)} characters of code")
 
@@ -231,11 +278,39 @@ def register_py_eval(local_mcp_instance, csv_dir):
             import pandas as pd
             import numpy as np
 
+            # Import plotting libraries
+            import matplotlib.pyplot as plt
+            import plotly
+            import plotly.express as px
+            import plotly.graph_objects as go
+            import seaborn as sns
+
+            # Import statistical and ML libraries
+            import scipy
+            import scipy.stats
+            import sklearn
+            import statsmodels.api as sm
+
+            # Import financial analysis libraries
+            import ta
+            import empyrical
+
             # Create execution environment
             env = {
                 "__builtins__": __builtins__,
                 "pd": pd,
                 "np": np,
+                "plt": plt,
+                "plotly": plotly,
+                "px": px,
+                "go": go,
+                "sns": sns,
+                "scipy": scipy,
+                "stats": scipy.stats,
+                "sklearn": sklearn,
+                "sm": sm,
+                "ta": ta,
+                "empyrical": empyrical,
                 "CSV_PATH": str(csv_dir),
             }
 
