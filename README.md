@@ -134,6 +134,22 @@ Each tool includes comprehensive inline documentation with:
 
 Run tools without parameters to see full documentation.
 
+## Claude Desktop config
+```
+"binance_local": {
+    "command": "npx",
+    "args": [
+        "mcp-remote",
+        "http://localhost:8010/binance/"
+    ]
+}
+```
+
+## Claude Code config
+```
+claude mcp add-json binance_local '{"command":"npx","args":["mcp-remote","http://localhost:8010/binance/"]}'
+```
+
 ## License
 
 MIT License - See LICENSE file for details.
