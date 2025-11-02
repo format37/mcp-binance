@@ -18,9 +18,12 @@ import matplotlib
 matplotlib.use('Agg')  # Non-interactive backend for server use
 import matplotlib.pyplot as plt
 from binance.client import Client
-from typing import Optional, Dict, Tuple
+from typing import Optional, Dict, Tuple, Any
 from mcp_service import format_csv_response
 from sentry_utils import with_sentry_tracing
+from mcp.server.fastmcp import Image as MCPImage
+from PIL import Image as PILImage
+from mcp_image_utils import to_mcp_image
 
 logger = logging.getLogger(__name__)
 
@@ -816,7 +819,7 @@ def register_binance_portfolio_comparison(local_mcp_instance, local_binance_clie
     """Register the binance_portfolio_comparison tool"""
 
     @local_mcp_instance.tool()
-    def binance_portfolio_comparison(days: int = 30) -> str:
+    def binance_portfolio_comparison(days: int = 30) -> list[Any]:
         """
         Generate a comprehensive portfolio performance report comparing actual trading results
         against a hypothetical buy-and-hold strategy (33% BTC, 33% ETH, 33% USDT).
@@ -837,7 +840,7 @@ def register_binance_portfolio_comparison(local_mcp_instance, local_binance_clie
             days (int): Number of days to analyze (default: 30)
 
         Returns:
-            str: Comprehensive report with all generated file information and markdown performance summary
+            list: [ImageContent, str] - Portfolio chart image followed by comprehensive report with all generated file information and markdown performance summary
 
         CSV Output Files:
 
@@ -943,10 +946,39 @@ def register_binance_portfolio_comparison(local_mcp_instance, local_binance_clie
 
             final_response = "".join(response_parts)
 
+            # Load the PNG image and convert for inline display
+            logger.info("Loading PNG for inline display...")
+            with PILImage.open(result['png_path']) as full_image:
+                # Create a copy for preview
+                preview_image = full_image.copy()
+
+                # Resize for optimal response size (max 1200x900 for chart readability)
+                max_width = 1200
+                max_height = 900
+                preview_image.thumbnail((max_width, max_height), resample=PILImage.Resampling.LANCZOS)
+
+                # Convert to RGB for JPEG compatibility
+                if preview_image.mode not in ("RGB", "L"):
+                    preview_image = preview_image.convert("RGB")
+
+                # Convert to MCPImage with JPEG compression
+                mcp_image = to_mcp_image(
+                    preview_image,
+                    format="jpeg",
+                    quality=85,
+                    optimize=True
+                )
+
+                # Convert to ImageContent
+                image_content = mcp_image.to_image_content()
+
             logger.info(f"binance_portfolio_comparison completed successfully")
 
-            return final_response
+            # Return list with image first, then text report
+            return [image_content, final_response]
 
         except Exception as e:
             logger.error(f"Error in binance_portfolio_comparison tool: {e}")
-            return f"Error generating portfolio comparison report: {str(e)}"
+            error_msg = f"Error generating portfolio comparison report: {str(e)}"
+            # Return as list for consistency
+            return [error_msg]
