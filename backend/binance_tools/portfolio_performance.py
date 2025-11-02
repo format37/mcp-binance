@@ -1,5 +1,5 @@
 """
-Portfolio Comparison MCP Tool
+Portfolio Performance MCP Tool
 
 Provides a comprehensive portfolio performance report comparing actual trading
 results against a hypothetical buy-and-hold strategy (33% BTC, 33% ETH, 33% USDT).
@@ -596,7 +596,7 @@ def create_visualization(merged_df: pd.DataFrame, metrics: Dict, output_path: Pa
 
     ax.set_xlabel('Date', fontsize=12, fontweight='bold')
     ax.set_ylabel('Portfolio Value (USDT)', fontsize=12, fontweight='bold')
-    ax.set_title('Portfolio Comparison: Event-Based Analysis\nActual Trading vs Buy-and-Hold Strategy',
+    ax.set_title('Portfolio Performance: Event-Based Analysis\nActual Trading vs Buy-and-Hold Strategy',
                  fontsize=15, fontweight='bold', pad=20)
     ax.legend(fontsize=11, loc='best')
     ax.grid(True, alpha=0.3, linestyle=':')
@@ -644,7 +644,7 @@ def build_markdown_report(events_df: pd.DataFrame, metrics: Dict) -> str:
     outperformance = metrics['actual']['return_pct'] - metrics['hypothetical']['return_pct']
     outperf_verdict = "✓ Trading strategy outperformed buy-and-hold" if outperformance > 0 else "✗ Trading strategy underperformed buy-and-hold"
 
-    report = f"""# Portfolio Comparison Report
+    report = f"""# Portfolio Performance Report
 
 ## Capital Invested Summary
 
@@ -700,10 +700,10 @@ Total events: {len(events_df)}
 # MAIN FETCH FUNCTION
 # ============================================================================
 
-@with_sentry_tracing("binance_portfolio_comparison")
-def fetch_portfolio_comparison(binance_client: Client, csv_dir: Path, days: int = 30) -> Dict[str, any]:
+@with_sentry_tracing("binance_portfolio_performance")
+def fetch_portfolio_performance(binance_client: Client, csv_dir: Path, days: int = 30) -> Dict[str, any]:
     """
-    Generate comprehensive portfolio comparison report.
+    Generate comprehensive portfolio performance report.
 
     Args:
         binance_client: Initialized Binance Client
@@ -719,7 +719,7 @@ def fetch_portfolio_comparison(binance_client: Client, csv_dir: Path, days: int 
         - markdown_report: Formatted markdown report string
         - metrics: Dictionary with performance metrics
     """
-    logger.info(f"Starting portfolio comparison analysis for last {days} days")
+    logger.info(f"Starting portfolio performance analysis for last {days} days")
 
     try:
         # Fetch data
@@ -760,11 +760,11 @@ def fetch_portfolio_comparison(binance_client: Client, csv_dir: Path, days: int 
         report_id = str(uuid.uuid4())[:8]
 
         # Save CSV files
-        equity_csv_path = csv_dir / f"portfolio_equity_{report_id}.csv"
+        equity_csv_path = csv_dir / f"portfolio_performance_equity_{report_id}.csv"
         merged.to_csv(equity_csv_path, index=False)
         logger.info(f"Saved equity curves CSV: {equity_csv_path.name}")
 
-        events_csv_path = csv_dir / f"cash_flow_events_{report_id}.csv"
+        events_csv_path = csv_dir / f"portfolio_performance_events_{report_id}.csv"
         events_df.to_csv(events_csv_path, index=False)
         logger.info(f"Saved cash flow events CSV: {events_csv_path.name}")
 
@@ -782,18 +782,18 @@ def fetch_portfolio_comparison(binance_client: Client, csv_dir: Path, days: int 
             {'metric': 'outperformance_pct', 'value': metrics['actual']['return_pct'] - metrics['hypothetical']['return_pct']}
         ]
         metrics_df = pd.DataFrame(metrics_records)
-        metrics_csv_path = csv_dir / f"portfolio_metrics_{report_id}.csv"
+        metrics_csv_path = csv_dir / f"portfolio_performance_metrics_{report_id}.csv"
         metrics_df.to_csv(metrics_csv_path, index=False)
         logger.info(f"Saved metrics CSV: {metrics_csv_path.name}")
 
         # Generate visualization
-        png_path = csv_dir / f"portfolio_chart_{report_id}.png"
+        png_path = csv_dir / f"portfolio_performance_chart_{report_id}.png"
         create_visualization(merged, metrics, png_path)
 
         # Build markdown report
         markdown_report = build_markdown_report(events_df, metrics)
 
-        logger.info("Portfolio comparison analysis completed successfully")
+        logger.info("Portfolio performance analysis completed successfully")
 
         return {
             'equity_csv_path': equity_csv_path,
@@ -807,7 +807,7 @@ def fetch_portfolio_comparison(binance_client: Client, csv_dir: Path, days: int 
         }
 
     except Exception as e:
-        logger.error(f"Error in portfolio comparison analysis: {e}")
+        logger.error(f"Error in portfolio performance analysis: {e}")
         raise
 
 
@@ -815,11 +815,11 @@ def fetch_portfolio_comparison(binance_client: Client, csv_dir: Path, days: int 
 # MCP TOOL REGISTRATION
 # ============================================================================
 
-def register_binance_portfolio_comparison(local_mcp_instance, local_binance_client, csv_dir):
-    """Register the binance_portfolio_comparison tool"""
+def register_binance_portfolio_performance(local_mcp_instance, local_binance_client, csv_dir):
+    """Register the binance_portfolio_performance tool"""
 
     @local_mcp_instance.tool()
-    def binance_portfolio_comparison(days: int = 30) -> list[Any]:
+    def binance_portfolio_performance(days: int = 30) -> list[Any]:
         """
         Generate a comprehensive portfolio performance report comparing actual trading results
         against a hypothetical buy-and-hold strategy (33% BTC, 33% ETH, 33% USDT).
@@ -844,12 +844,12 @@ def register_binance_portfolio_comparison(local_mcp_instance, local_binance_clie
 
         CSV Output Files:
 
-        1. **Equity Curves CSV** (`portfolio_equity_*.csv`):
+        1. **Equity Curves CSV** (`portfolio_performance_equity_*.csv`):
             - date (datetime): Date
             - actual (float): Actual portfolio value in USDT
             - hypothetical (float): Hypothetical buy-and-hold portfolio value in USDT
 
-        2. **Cash Flow Events CSV** (`cash_flow_events_*.csv`):
+        2. **Cash Flow Events CSV** (`portfolio_performance_events_*.csv`):
             - timestamp (datetime): Event timestamp
             - timestamp_ms (int): Event timestamp in milliseconds
             - type (string): Event type (P2P_BUY, P2P_SELL, DEPOSIT)
@@ -859,11 +859,11 @@ def register_binance_portfolio_comparison(local_mcp_instance, local_binance_clie
             - description (string): Human-readable description
             - cumulative_invested (float): Cumulative capital invested up to this event
 
-        3. **Performance Metrics CSV** (`portfolio_metrics_*.csv`):
+        3. **Performance Metrics CSV** (`portfolio_performance_metrics_*.csv`):
             - metric (string): Metric name
             - value (float): Metric value
 
-        4. **Visualization PNG** (`portfolio_chart_*.png`):
+        4. **Visualization PNG** (`portfolio_performance_chart_*.png`):
             - Chart comparing actual vs hypothetical portfolio equity curves
             - Includes performance metrics overlay
             - Accessible via web URL (temp PNG folder will be published on web)
@@ -886,9 +886,9 @@ def register_binance_portfolio_comparison(local_mcp_instance, local_binance_clie
             - Track maximum drawdowns and risk metrics
 
         Example usage:
-            binance_portfolio_comparison(days=30)
-            binance_portfolio_comparison(days=60)
-            binance_portfolio_comparison(days=90)
+            binance_portfolio_performance(days=30)
+            binance_portfolio_performance(days=60)
+            binance_portfolio_performance(days=90)
 
         Note:
             - Requires historical data access (P2P, deposits, trades)
@@ -897,11 +897,11 @@ def register_binance_portfolio_comparison(local_mcp_instance, local_binance_clie
             - All values are calculated in USDT
             - PNG chart files are saved to the same directory as CSV files for web publishing
         """
-        logger.info(f"binance_portfolio_comparison tool invoked with days={days}")
+        logger.info(f"binance_portfolio_performance tool invoked with days={days}")
 
         try:
             # Call the main fetch function
-            result = fetch_portfolio_comparison(
+            result = fetch_portfolio_performance(
                 binance_client=local_binance_client,
                 csv_dir=csv_dir,
                 days=days
@@ -972,13 +972,13 @@ def register_binance_portfolio_comparison(local_mcp_instance, local_binance_clie
                 # Convert to ImageContent
                 image_content = mcp_image.to_image_content()
 
-            logger.info(f"binance_portfolio_comparison completed successfully")
+            logger.info(f"binance_portfolio_performance completed successfully")
 
             # Return list with image first, then text report
             return [image_content, final_response]
 
         except Exception as e:
-            logger.error(f"Error in binance_portfolio_comparison tool: {e}")
-            error_msg = f"Error generating portfolio comparison report: {str(e)}"
+            logger.error(f"Error in binance_portfolio_performance tool: {e}")
+            error_msg = f"Error generating portfolio performance report: {str(e)}"
             # Return as list for consistency
             return [error_msg]
