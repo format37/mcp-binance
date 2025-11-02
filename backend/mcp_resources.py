@@ -7,6 +7,382 @@ def register_mcp_resources(local_mcp_instance, safe_name):
     """Register MCP resources (documentation, etc.)"""
 
     @local_mcp_instance.resource(
+        f"{safe_name}://portfolio-report-guide",
+        name="Portfolio Comparison Report Guide",
+        description="Guide for generating event-based portfolio comparison reports with interactive analysis",
+        mime_type="text/markdown"
+    )
+    def get_portfolio_report_guide() -> str:
+        """Portfolio comparison report generation guide with py_eval examples."""
+        return """# Portfolio Comparison Report Guide
+
+## Overview
+
+Generate comprehensive portfolio performance reports comparing actual trading vs buy-and-hold strategy using event-based analysis with real P2P and deposit history.
+
+## Quick Start - Generate Full Report
+
+```python
+# Step 1: Run the portfolio comparison script
+# This generates CSV files with equity curves and metrics
+import subprocess
+result = subprocess.run(
+    ['python3', '/path/to/examples/report/portfolio_comparison_v2.py'],
+    capture_output=True,
+    text=True,
+    cwd='/path/to/project'
+)
+print(result.stdout)
+```
+
+## Using py_eval for Analysis
+
+### 1. Load and Analyze Report Data
+
+```python
+import os
+
+# Find report files
+files = [f for f in os.listdir(CSV_PATH) if f.endswith('.csv')]
+equity_files = [f for f in files if 'portfolio_comparison_v2' in f]
+events_files = [f for f in files if 'cash_flow_events' in f]
+
+if equity_files:
+    # Load equity curves
+    equity_df = pd.read_csv(f'{CSV_PATH}/{equity_files[-1]}')
+    equity_df['date'] = pd.to_datetime(equity_df['date'])
+
+    print("=== PORTFOLIO COMPARISON SUMMARY ===")
+    print(f"Analysis period: {equity_df['date'].min().date()} to {equity_df['date'].max().date()}")
+    print(f"Data points: {len(equity_df)}")
+
+    # Calculate returns
+    actual_start = equity_df['actual'].iloc[0]
+    actual_end = equity_df['actual'].iloc[-1]
+    hypo_start = equity_df['hypothetical'].iloc[0]
+    hypo_end = equity_df['hypothetical'].iloc[-1]
+
+    actual_return = ((actual_end - actual_start) / actual_start) * 100
+    hypo_return = ((hypo_end - hypo_start) / hypo_start) * 100
+
+    print(f"\nActual Trading:")
+    print(f"  Start: ${actual_start:,.2f}")
+    print(f"  End: ${actual_end:,.2f}")
+    print(f"  Return: {actual_return:+.2f}%")
+
+    print(f"\nBuy-and-Hold:")
+    print(f"  Start: ${hypo_start:,.2f}")
+    print(f"  End: ${hypo_end:,.2f}")
+    print(f"  Return: {hypo_return:+.2f}%")
+
+    print(f"\nOutperformance: {actual_return - hypo_return:+.2f}%")
+```
+
+### 2. Generate Concise Table for Client (Row-Limited)
+
+⚠️ **Important**: Client responses have length limits. Return only essential rows.
+
+```python
+import os
+
+files = [f for f in os.listdir(CSV_PATH) if f.endswith('.csv')]
+equity_files = [f for f in files if 'portfolio_comparison_v2' in f]
+
+if equity_files:
+    equity_df = pd.read_csv(f'{CSV_PATH}/{equity_files[-1]}')
+    equity_df['date'] = pd.to_datetime(equity_df['date'])
+
+    # Strategy 1: Sample evenly across time period (recommended)
+    # Take every Nth row to get ~20-30 data points
+    total_rows = len(equity_df)
+    target_points = 25  # Adjust based on client limit
+    step = max(1, total_rows // target_points)
+
+    sampled_df = equity_df.iloc[::step].copy()
+
+    # Always include the last row (most recent)
+    if sampled_df.iloc[-1]['date'] != equity_df.iloc[-1]['date']:
+        sampled_df = pd.concat([sampled_df, equity_df.iloc[[-1]]])
+
+    # Format for client-side plotting
+    plot_table = sampled_df[['date', 'actual', 'hypothetical']].copy()
+    plot_table['date'] = plot_table['date'].dt.strftime('%Y-%m-%d')
+    plot_table = plot_table.rename(columns={
+        'date': 'Date',
+        'actual': 'Actual Trading ($)',
+        'hypothetical': 'Buy-and-Hold ($)'
+    })
+
+    print("=== EQUITY CURVES (SAMPLED) ===")
+    print(f"Showing {len(plot_table)} of {total_rows} data points")
+    print(plot_table.to_string(index=False))
+
+    # Alternative Strategy 2: Weekly/Daily aggregation
+    # For longer periods, aggregate to weekly
+    if total_rows > 50:
+        equity_df['week'] = equity_df['date'].dt.to_period('W')
+        weekly_df = equity_df.groupby('week').agg({
+            'date': 'last',
+            'actual': 'last',
+            'hypothetical': 'last'
+        }).reset_index(drop=True)
+
+        print("\n=== WEEKLY EQUITY CURVES ===")
+        print(f"Showing {len(weekly_df)} weekly points")
+```
+
+### 3. Generate Concise Text Review
+
+```python
+import os
+import json
+
+# Load metrics JSON
+files = [f for f in os.listdir(CSV_PATH) if f.endswith('.json')]
+metrics_files = [f for f in files if 'portfolio_comparison_v2_metrics' in f]
+
+if metrics_files:
+    with open(f'{CSV_PATH}/{metrics_files[-1]}', 'r') as f:
+        metrics = json.load(f)
+
+    # Generate concise review
+    total_invested = metrics['total_invested']
+    actual = metrics['actual']
+    hypothetical = metrics['hypothetical']
+
+    print("="*70)
+    print("PORTFOLIO PERFORMANCE REVIEW")
+    print("="*70)
+
+    # Investment summary
+    print(f"\n💰 CAPITAL INVESTED: ${total_invested:,.2f}")
+
+    # Performance comparison
+    print(f"\n📊 ACTUAL TRADING PERFORMANCE:")
+    print(f"   Final Value:    ${actual['final']:,.2f}")
+    print(f"   Return:         {actual['return_pct']:+.2f}%")
+    print(f"   Profit/Loss:    ${actual['profit_loss']:+,.2f}")
+    print(f"   Max Drawdown:   {actual['max_drawdown_pct']:.2f}%")
+
+    print(f"\n📈 BUY-AND-HOLD BENCHMARK (33% BTC, 33% ETH, 33% USDT):")
+    print(f"   Final Value:    ${hypothetical['final']:,.2f}")
+    print(f"   Return:         {hypothetical['return_pct']:+.2f}%")
+    print(f"   Profit/Loss:    ${hypothetical['profit_loss']:+,.2f}")
+    print(f"   Max Drawdown:   {hypothetical['max_drawdown_pct']:.2f}%")
+
+    # Outperformance analysis
+    outperformance = actual['return_pct'] - hypothetical['return_pct']
+    print(f"\n{'='*70}")
+    print(f"📌 OUTPERFORMANCE: {outperformance:+.2f}%")
+    print(f"{'='*70}")
+
+    if outperformance > 0:
+        print("✅ Your trading strategy OUTPERFORMED the buy-and-hold benchmark!")
+        edge = abs(outperformance)
+        print(f"   You gained an additional {edge:.2f}% through active trading.")
+    else:
+        print("❌ Your trading strategy UNDERPERFORMED the buy-and-hold benchmark.")
+        loss = abs(outperformance)
+        print(f"   You would have gained {loss:.2f}% more by simply holding.")
+
+    # Risk-adjusted analysis
+    actual_risk_adj = actual['return_pct'] / abs(actual['max_drawdown_pct']) if actual['max_drawdown_pct'] != 0 else 0
+    hypo_risk_adj = hypothetical['return_pct'] / abs(hypothetical['max_drawdown_pct']) if hypothetical['max_drawdown_pct'] != 0 else 0
+
+    print(f"\n⚖️  RISK-ADJUSTED RETURNS:")
+    print(f"   Actual:        {actual_risk_adj:.3f}")
+    print(f"   Buy-and-Hold:  {hypo_risk_adj:.3f}")
+
+    if actual_risk_adj > hypo_risk_adj:
+        print("   ✅ Better risk-adjusted performance")
+    else:
+        print("   ❌ Worse risk-adjusted performance")
+
+    # Strategic insights
+    print(f"\n💡 INSIGHTS:")
+
+    # Volatility comparison
+    if abs(actual['max_drawdown_pct']) < abs(hypothetical['max_drawdown_pct']):
+        print("   • Lower volatility: Your strategy is more stable")
+    else:
+        print("   • Higher volatility: Your strategy experienced larger swings")
+
+    # Absolute gains
+    if actual['profit_loss'] > 0:
+        print(f"   • Profitable: Made ${actual['profit_loss']:,.2f} in absolute gains")
+    else:
+        print(f"   • Loss: Lost ${abs(actual['profit_loss']):,.2f} in absolute terms")
+
+    # Recommendation
+    print(f"\n🎯 RECOMMENDATION:")
+    if outperformance > 2:
+        print("   Strong outperformance - continue current strategy with monitoring")
+    elif outperformance > 0:
+        print("   Modest outperformance - strategy is working, consider optimization")
+    elif outperformance > -2:
+        print("   Slight underperformance - review trading decisions")
+    else:
+        print("   Significant underperformance - consider reverting to buy-and-hold")
+```
+
+### 4. Analyze Cash Flow Events
+
+```python
+import os
+
+files = [f for f in os.listdir(CSV_PATH) if f.endswith('.csv')]
+events_files = [f for f in files if 'cash_flow_events' in f]
+
+if events_files:
+    events_df = pd.read_csv(f'{CSV_PATH}/{events_files[-1]}')
+    events_df['timestamp'] = pd.to_datetime(events_df['timestamp'])
+
+    print("=== CASH FLOW ANALYSIS ===")
+
+    # Event breakdown
+    event_counts = events_df['type'].value_counts()
+    print(f"\nEvent breakdown:")
+    for event_type, count in event_counts.items():
+        print(f"  {event_type}: {count} events")
+
+    # Capital flow summary
+    deposits = events_df[events_df['usd_value'] > 0]['usd_value'].sum()
+    withdrawals = abs(events_df[events_df['usd_value'] < 0]['usd_value'].sum())
+    net_flow = deposits - withdrawals
+
+    print(f"\nCapital flows:")
+    print(f"  Total deposits:    ${deposits:,.2f}")
+    print(f"  Total withdrawals: ${withdrawals:,.2f}")
+    print(f"  Net capital flow:  ${net_flow:,.2f}")
+
+    # Recent events (limited for client)
+    print(f"\nRecent events (last 5):")
+    recent = events_df.nlargest(5, 'timestamp')
+    for _, event in recent.iterrows():
+        sign = "+" if event['usd_value'] > 0 else ""
+        print(f"  {event['timestamp'].strftime('%Y-%m-%d')}: {event['type']:12s} {sign}${event['usd_value']:>10,.2f}")
+```
+
+### 5. Complete Analysis Workflow
+
+```python
+import os
+import json
+
+def analyze_portfolio_report():
+    \"\"\"Complete portfolio analysis with concise output\"\"\"
+
+    # 1. Load all report files
+    files = os.listdir(CSV_PATH)
+    equity_file = next((f for f in files if 'portfolio_comparison_v2.csv' in f), None)
+    metrics_file = next((f for f in files if 'portfolio_comparison_v2_metrics.json' in f), None)
+    events_file = next((f for f in files if 'cash_flow_events.csv' in f), None)
+
+    if not all([equity_file, metrics_file, events_file]):
+        print("❌ Error: Report files not found. Run portfolio_comparison_v2.py first.")
+        return
+
+    # 2. Load data
+    equity_df = pd.read_csv(f'{CSV_PATH}/{equity_file}')
+    equity_df['date'] = pd.to_datetime(equity_df['date'])
+
+    with open(f'{CSV_PATH}/{metrics_file}', 'r') as f:
+        metrics = json.load(f)
+
+    events_df = pd.read_csv(f'{CSV_PATH}/{events_file}')
+
+    # 3. Generate concise review
+    print("="*70)
+    print("PORTFOLIO PERFORMANCE REPORT")
+    print("="*70)
+    print(f"\nPeriod: {equity_df['date'].min().date()} to {equity_df['date'].max().date()}")
+    print(f"Capital Invested: ${metrics['total_invested']:,.2f}")
+    print(f"Events Tracked: {len(events_df)}")
+
+    # Performance summary
+    actual = metrics['actual']
+    hypo = metrics['hypothetical']
+    outperf = actual['return_pct'] - hypo['return_pct']
+
+    print(f"\n{'Strategy':<20} {'Return':>10} {'Final Value':>15} {'Max DD':>10}")
+    print("-" * 70)
+    print(f"{'Actual Trading':<20} {actual['return_pct']:>9.2f}% ${actual['final']:>13,.2f} {actual['max_drawdown_pct']:>9.2f}%")
+    print(f"{'Buy-and-Hold':<20} {hypo['return_pct']:>9.2f}% ${hypo['final']:>13,.2f} {hypo['max_drawdown_pct']:>9.2f}%")
+    print(f"{'Difference':<20} {outperf:>9.2f}% ${actual['final']-hypo['final']:>13,.2f}")
+
+    # Verdict
+    print(f"\n{'='*70}")
+    if outperf > 0:
+        print(f"✅ OUTPERFORMED by {outperf:.2f}%")
+    else:
+        print(f"❌ UNDERPERFORMED by {abs(outperf):.2f}%")
+    print(f"{'='*70}")
+
+    # 4. Return sampled data for plotting (CLIENT LIMIT AWARE)
+    total_rows = len(equity_df)
+    step = max(1, total_rows // 25)  # Max 25 points
+    sampled = equity_df.iloc[::step][['date', 'actual', 'hypothetical']].copy()
+
+    # Ensure last point included
+    if sampled.iloc[-1]['date'] != equity_df.iloc[-1]['date']:
+        sampled = pd.concat([sampled, equity_df.iloc[[-1]][['date', 'actual', 'hypothetical']]])
+
+    sampled['date'] = sampled['date'].dt.strftime('%Y-%m-%d')
+
+    print(f"\n=== EQUITY CURVE DATA ({len(sampled)} points) ===")
+    print(sampled.to_string(index=False, max_rows=30))
+
+# Run the analysis
+analyze_portfolio_report()
+```
+
+## CLI Usage (Alternative)
+
+For interactive exploration:
+
+```bash
+# Default 30-day analysis
+python3 examples/report/portfolio_comparison_v2.py
+
+# Interactive mode with plot
+python3 examples/report/portfolio_comparison_v2.py --interactive
+
+# Custom period
+python3 examples/report/portfolio_comparison_v2.py --days 60 -i
+
+# Different time granularity
+python3 examples/report/portfolio_comparison_v2.py --interval 5m --days 7 -i
+```
+
+## Best Practices
+
+1. **Row Limits**: Always sample or aggregate data to stay within client response limits (20-30 rows recommended)
+2. **Date Formatting**: Convert dates to strings for clean table display
+3. **Concise Output**: Focus on key metrics rather than verbose explanations
+4. **Error Handling**: Check if report files exist before loading
+5. **Metrics JSON**: Use the metrics JSON file for precise calculations rather than recalculating
+6. **Event Analysis**: Cash flow events CSV provides the complete capitalization history
+
+## Key Files Generated
+
+| File | Purpose |
+|------|---------|
+| `portfolio_comparison_v2.csv` | Daily equity curves (actual & buy-and-hold) |
+| `portfolio_comparison_v2_metrics.json` | Performance metrics and returns |
+| `cash_flow_events.csv` | All P2P and deposit events with USD values |
+| `portfolio_comparison_v2.png` | Visualization chart |
+
+## Response Length Management
+
+To avoid hitting client response limits:
+
+- **Sampling**: `df.iloc[::step]` - take every Nth row
+- **Aggregation**: Group by week/month for long periods
+- **Limiting**: Use `.head(N)` or `.tail(N)` for specific rows
+- **Target**: Aim for 20-30 rows maximum in returned tables
+"""
+
+    @local_mcp_instance.resource(
         f"{safe_name}://documentation",
         name="Polygon API Documentation",
         description="Documentation for Polygon.io financial market data API",
