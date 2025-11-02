@@ -29,6 +29,7 @@ from binance_tools.spot_trade_history import register_binance_spot_trade_history
 from binance_tools.get_deposit_history import register_binance_get_deposit_history
 from binance_tools.get_withdrawal_history import register_binance_get_withdrawal_history
 from binance_tools.get_p2p_history import register_binance_get_p2p_history
+from binance_tools.get_historical_klines import register_binance_get_historical_klines
 from binance_tools.spot_market_order import register_binance_spot_market_order
 from binance_tools.spot_limit_order import register_binance_spot_limit_order
 from binance_tools.spot_oco_order import register_binance_spot_oco_order
@@ -172,6 +173,7 @@ register_binance_spot_trade_history(mcp, binance_client, CSV_DIR)
 register_binance_get_deposit_history(mcp, binance_client, CSV_DIR)
 register_binance_get_withdrawal_history(mcp, binance_client, CSV_DIR)
 register_binance_get_p2p_history(mcp, binance_client, CSV_DIR)
+register_binance_get_historical_klines(mcp, binance_client, CSV_DIR)
 register_binance_spot_market_order(mcp, binance_client, CSV_DIR)
 register_binance_spot_limit_order(mcp, binance_client, CSV_DIR)
 register_binance_spot_oco_order(mcp, binance_client, CSV_DIR)
