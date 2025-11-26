@@ -31,6 +31,7 @@ Each tool is implemented in a separate file (`backend/binance_tools/*.py`) with 
 - `binance_get_account` - Portfolio balances with USDT valuations
 - `binance_get_open_orders` - Currently active orders
 - `binance_spot_trade_history` - Executed trade history with P&L data
+- `binance_portfolio_performance` - Comparison between current portfolio and Bencmark portfolio
 
 ### Spot Trading
 - `binance_spot_market_order` - Execute market buy/sell orders

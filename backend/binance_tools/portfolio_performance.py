@@ -9,6 +9,7 @@ as an MCP tool for easy access by AI agents.
 """
 
 import logging
+import os
 import uuid
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -936,8 +937,19 @@ def register_binance_portfolio_performance(local_mcp_instance, local_binance_cli
             response_parts.append(f"✓ Chart saved to PNG\n\n")
             response_parts.append(f"File: {result['png_path'].name}\n")
             response_parts.append(f"Size: {png_size_str}\n")
-            response_parts.append(f"Location: data/mcp-binance/{result['png_path'].name}\n")
-            response_parts.append(f"\nThe chart will be accessible via web once the temp PNG folder is published.\n")
+
+            # Generate download URL
+            public_base = os.getenv("MCP_PUBLIC_ASSET_BASE_URL", "").rstrip("/")
+            if not public_base:
+                public_base_url = os.getenv("MCP_PUBLIC_BASE_URL", "").rstrip("/")
+                if public_base_url:
+                    public_base = f"{public_base_url}/binance/assets"
+
+            if public_base:
+                download_url = f"{public_base}/{result['png_path'].name}"
+                response_parts.append(f"\n**Download URL:** {download_url}\n")
+            else:
+                response_parts.append(f"\nConfigure MCP_PUBLIC_BASE_URL to enable download links.\n")
 
             # Add markdown performance report
             response_parts.append("\n\n" + "="*80 + "\n")

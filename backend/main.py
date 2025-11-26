@@ -13,6 +13,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import JSONResponse
 from starlette.routing import Route
 from starlette.routing import Mount
+from starlette.staticfiles import StaticFiles
 from mcp.server.fastmcp import FastMCP
 from binance.client import Client
 from mcp_service import register_py_eval, register_tool_notes
@@ -158,6 +159,15 @@ mcp = FastMCP(_safe_name, streamable_http_path=STREAM_PATH, json_response=True)
 CSV_DIR = pathlib.Path("data/mcp-binance")
 CSV_DIR.mkdir(parents=True, exist_ok=True)
 
+# Public asset URL configuration
+ASSETS_ROUTE = f"{STREAM_PATH.rstrip('/')}/assets"
+ASSETS_DIR = CSV_DIR
+
+PUBLIC_BASE_URL = os.getenv("MCP_PUBLIC_BASE_URL", "").rstrip("/")
+PUBLIC_ASSET_BASE_URL = os.getenv("MCP_PUBLIC_ASSET_BASE_URL", "").rstrip("/")
+if not PUBLIC_ASSET_BASE_URL and PUBLIC_BASE_URL:
+    PUBLIC_ASSET_BASE_URL = f"{PUBLIC_BASE_URL}{ASSETS_ROUTE}"
+
 # Register MCP resources (documentation, etc.)
 register_mcp_resources(mcp, _safe_name)
 
@@ -220,15 +230,13 @@ async def health_check(request):
 
 app = Starlette(
     routes=[
+        Route("/health", health_check, methods=["GET"]),
+        Mount(ASSETS_ROUTE, app=StaticFiles(directory=ASSETS_DIR, check_dir=False), name="assets"),
         # Mount at root; internal app handles service path routing
         Mount("/", app=mcp_asgi),
     ],
     lifespan=lifespan,
 )
-
-# Add health endpoint before auth middleware
-from starlette.routing import Route
-app.routes.insert(0, Route("/health", health_check, methods=["GET"]))
 
 
 class TokenAuthMiddleware(BaseHTTPMiddleware):
@@ -275,6 +283,10 @@ class TokenAuthMiddleware(BaseHTTPMiddleware):
         # Only protect BASE_PATH path space
         path = request.url.path or "/"
         if not path.startswith(BASE_PATH):
+            return await call_next(request)
+
+        # Allow public access to assets (UUID-based security)
+        if path.startswith(ASSETS_ROUTE):
             return await call_next(request)
 
         def accept(token_value: str, source: str):
