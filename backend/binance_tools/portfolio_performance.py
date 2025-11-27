@@ -2,10 +2,13 @@
 Portfolio Performance MCP Tool
 
 Provides a comprehensive portfolio performance report comparing actual trading
-results against a hypothetical buy-and-hold strategy (33% BTC, 33% ETH, 33% USDT).
+results against a hypothetical buy-and-hold strategy (33% BTC, 33% ETH, 34% USDT).
 
-This tool wraps the portfolio_comparison_v2.py script logic and makes it available
-as an MCP tool for easy access by AI agents.
+Key features:
+- Fixed $3000 initial portfolio baseline
+- Trade-focused: Uses actual spot trades only (no P2P/deposit complexity)
+- Smart initialization: Adjusts initial allocation to prevent negative holdings
+- Benchmark rebalances on each actual trade timestamp
 """
 
 import logging
@@ -19,7 +22,7 @@ import matplotlib
 matplotlib.use('Agg')  # Non-interactive backend for server use
 import matplotlib.pyplot as plt
 from binance.client import Client
-from typing import Optional, Dict, Tuple, Any
+from typing import Optional, Dict, Tuple, Any, List
 from mcp_service import format_csv_response
 from sentry_utils import with_sentry_tracing
 from mcp.server.fastmcp import Image as MCPImage
@@ -28,7 +31,8 @@ from mcp_image_utils import to_mcp_image
 
 logger = logging.getLogger(__name__)
 
-# Portfolio allocation for hypothetical portfolio
+# Portfolio constants
+INITIAL_CAPITAL = 3000.0  # Fixed initial portfolio value in USD
 PORTFOLIO_WEIGHTS = {
     'BTC': 0.333,
     'ETH': 0.333,
@@ -54,116 +58,12 @@ def get_price_at_timestamp(klines_df: pd.DataFrame, timestamp: pd.Timestamp) -> 
     klines_df_copy['time_diff'] = abs(klines_df_copy['timestamp'] - timestamp)
     closest = klines_df_copy.loc[klines_df_copy['time_diff'].idxmin()]
 
-    # Use close price
     return closest['close']
 
 
 # ============================================================================
 # DATA FETCHING FUNCTIONS
 # ============================================================================
-
-def fetch_p2p_history(client: Client, trade_type: str, days: int = 30) -> pd.DataFrame:
-    """Fetch P2P trading history (BUY or SELL)"""
-    logger.info(f"Fetching P2P {trade_type} history (last {days} days)...")
-
-    try:
-        response = client.get_c2c_trade_history(tradeType=trade_type, rows=100)
-
-        if response.get('code') != '000000' or not response.get('success'):
-            logger.warning(f"P2P API error: {response.get('message', 'Unknown error')}")
-            return pd.DataFrame()
-
-        trades = response.get('data', [])
-
-        if not trades:
-            logger.info(f"No {trade_type} trades found")
-            return pd.DataFrame()
-
-        # Filter by date and COMPLETED status only
-        cutoff_time = (datetime.now() - timedelta(days=days)).timestamp() * 1000
-
-        records = []
-        for trade in trades:
-            create_time = trade.get('createTime')
-
-            # Skip if older than cutoff or not completed
-            if create_time < cutoff_time:
-                continue
-            if trade.get('orderStatus') != 'COMPLETED':
-                continue
-
-            records.append({
-                'timestamp': datetime.fromtimestamp(create_time / 1000),
-                'timestamp_ms': create_time,
-                'type': trade_type,
-                'asset': trade.get('asset'),
-                'fiat': trade.get('fiat'),
-                'crypto_amount': float(trade.get('amount', 0)),
-                'fiat_amount': float(trade.get('totalPrice', 0)),
-                'unit_price': float(trade.get('unitPrice', 0)),
-                'commission': float(trade.get('commission', 0))
-            })
-
-        df = pd.DataFrame(records)
-        if not df.empty:
-            df = df.sort_values('timestamp').reset_index(drop=True)
-            logger.info(f"Found {len(df)} completed {trade_type} trades")
-
-        return df
-
-    except Exception as e:
-        logger.warning(f"Error fetching P2P {trade_type} history: {e}")
-        return pd.DataFrame()
-
-
-def fetch_deposit_history(client: Client, days: int = 30) -> pd.DataFrame:
-    """Fetch crypto deposit history"""
-    logger.info(f"Fetching deposit history (last {days} days)...")
-
-    try:
-        deposits = client.get_deposit_history()
-
-        if not deposits:
-            logger.info("No deposits found")
-            return pd.DataFrame()
-
-        # Filter by date and SUCCESS status only
-        cutoff_time = (datetime.now() - timedelta(days=days)).timestamp() * 1000
-
-        records = []
-        for deposit in deposits:
-            complete_time = deposit.get('completeTime') or deposit.get('insertTime')
-
-            if not complete_time:
-                continue
-
-            # Skip if older than cutoff or not successful
-            if complete_time < cutoff_time:
-                continue
-            if deposit.get('status') != 1:  # 1 = Success
-                continue
-
-            records.append({
-                'timestamp': datetime.fromtimestamp(complete_time / 1000),
-                'timestamp_ms': complete_time,
-                'type': 'DEPOSIT',
-                'coin': deposit.get('coin'),
-                'amount': float(deposit.get('amount', 0)),
-                'network': deposit.get('network'),
-                'txId': deposit.get('txId')
-            })
-
-        df = pd.DataFrame(records)
-        if not df.empty:
-            df = df.sort_values('timestamp').reset_index(drop=True)
-            logger.info(f"Found {len(df)} successful deposits")
-
-        return df
-
-    except Exception as e:
-        logger.warning(f"Error fetching deposit history: {e}")
-        return pd.DataFrame()
-
 
 def fetch_historical_klines(client: Client, symbol: str, interval: str = '1h', days: int = 30) -> pd.DataFrame:
     """Fetch historical klines/candlestick data"""
@@ -249,257 +149,228 @@ def fetch_spot_trade_history(client: Client, symbol: str, days: Optional[int] = 
         return pd.DataFrame()
 
 
-def get_current_balances(client: Client) -> Dict[str, float]:
-    """Get current spot account balances"""
-    logger.info("Fetching current account balances...")
-
-    try:
-        account = client.get_account()
-        balances = {}
-
-        for balance in account['balances']:
-            asset = balance['asset']
-            free = float(balance['free'])
-            locked = float(balance['locked'])
-            total = free + locked
-
-            # Only include non-zero balances
-            if total > 0:
-                balances[asset] = total
-
-        # Ensure we have BTC, ETH, USDT even if zero
-        for asset in ['BTC', 'ETH', 'USDT']:
-            if asset not in balances:
-                balances[asset] = 0.0
-
-        logger.info(f"Current balances: BTC={balances.get('BTC', 0.0):.8f}, "
-                   f"ETH={balances.get('ETH', 0.0):.8f}, USDT=${balances.get('USDT', 0.0):,.2f}")
-
-        return balances
-
-    except Exception as e:
-        logger.warning(f"Error fetching account balances: {e}")
-        return {'BTC': 0.0, 'ETH': 0.0, 'USDT': 0.0}
-
-
 # ============================================================================
 # PORTFOLIO BUILDING FUNCTIONS
 # ============================================================================
 
-def build_cash_flow_timeline(p2p_buy_df: pd.DataFrame, p2p_sell_df: pd.DataFrame,
-                             deposit_df: pd.DataFrame, klines_btc: pd.DataFrame,
-                             klines_eth: pd.DataFrame) -> pd.DataFrame:
-    """Build timeline of all capitalization events with USD values"""
-    logger.info("Building cash flow timeline...")
+def build_trades_table(client: Client, days: int, klines_btc: pd.DataFrame,
+                       klines_eth: pd.DataFrame) -> pd.DataFrame:
+    """
+    Build a comprehensive trades table with historical prices attached.
 
-    events = []
+    Returns DataFrame with columns:
+    - timestamp, symbol, side, qty, quote_qty, price, commission, commission_asset
+    - btc_price, eth_price (market prices at trade time for portfolio valuation)
+    """
+    logger.info(f"Building trades table for last {days} days...")
 
-    # P2P BUY events (cash in via fiat)
-    for _, row in p2p_buy_df.iterrows():
-        events.append({
-            'timestamp': row['timestamp'],
-            'timestamp_ms': row['timestamp_ms'],
-            'type': 'P2P_BUY',
-            'asset': row['asset'],
-            'usd_value': row['fiat_amount'],
-            'crypto_amount': row['crypto_amount'],
-            'description': f"P2P BUY {row['crypto_amount']:.4f} {row['asset']} @ ${row['unit_price']:.2f}"
-        })
-
-    # P2P SELL events (cash out to fiat)
-    for _, row in p2p_sell_df.iterrows():
-        events.append({
-            'timestamp': row['timestamp'],
-            'timestamp_ms': row['timestamp_ms'],
-            'type': 'P2P_SELL',
-            'asset': row['asset'],
-            'usd_value': -row['fiat_amount'],
-            'crypto_amount': -row['crypto_amount'],
-            'description': f"P2P SELL {row['crypto_amount']:.4f} {row['asset']} @ ${row['unit_price']:.2f}"
-        })
-
-    # Deposit events (crypto in)
-    for _, row in deposit_df.iterrows():
-        coin = row['coin']
-        amount = row['amount']
-
-        # Get price at deposit time
-        price = None
-        if coin == 'BTC':
-            price = get_price_at_timestamp(klines_btc, row['timestamp'])
-        elif coin == 'ETH':
-            price = get_price_at_timestamp(klines_eth, row['timestamp'])
-        elif coin == 'USDT':
-            price = 1.0
-
-        if price is None:
-            logger.warning(f"Could not find price for {coin} deposit at {row['timestamp']}")
-            continue
-
-        usd_value = amount * price
-
-        events.append({
-            'timestamp': row['timestamp'],
-            'timestamp_ms': row['timestamp_ms'],
-            'type': 'DEPOSIT',
-            'asset': coin,
-            'usd_value': usd_value,
-            'crypto_amount': amount,
-            'description': f"DEPOSIT {amount:.8f} {coin} @ ${price:,.2f} = ${usd_value:,.2f}"
-        })
-
-    # Convert to DataFrame and sort
-    events_df = pd.DataFrame(events)
-
-    if events_df.empty:
-        logger.warning("No cash flow events found!")
-        return events_df
-
-    events_df = events_df.sort_values('timestamp').reset_index(drop=True)
-
-    # Calculate cumulative capital invested
-    events_df['cumulative_invested'] = events_df['usd_value'].cumsum()
-
-    logger.info(f"Total cash flow events: {len(events_df)}")
-    logger.info(f"Net capital invested: ${events_df['cumulative_invested'].iloc[-1]:,.2f}")
-
-    return events_df
-
-
-def build_hypothetical_portfolio(events_df: pd.DataFrame, klines_btc: pd.DataFrame,
-                                 klines_eth: pd.DataFrame, end_date) -> pd.DataFrame:
-    """Build hypothetical buy-and-hold portfolio (33/33/33) using cash flow events"""
-    logger.info("Building hypothetical portfolio (33% BTC, 33% ETH, 33% USDT)...")
-
-    # Build daily equity curve from first event to end date
-    start_date = events_df['timestamp'].min().date()
-    date_range = pd.date_range(start=start_date, end=end_date, freq='D')
-
-    equity_data = []
-
-    for date in date_range:
-        date_dt = pd.Timestamp(date)
-
-        # Apply any events that occurred on or before this date
-        events_to_date = events_df[events_df['timestamp'].dt.date <= date.date()]
-
-        if events_to_date.empty:
-            continue
-
-        # Recalculate holdings up to this date
-        temp_btc = 0.0
-        temp_eth = 0.0
-        temp_usdt = 0.0
-
-        for _, event in events_to_date.iterrows():
-            capital_change = event['usd_value']
-            event_timestamp = event['timestamp']
-
-            btc_price_event = get_price_at_timestamp(klines_btc, event_timestamp)
-            eth_price_event = get_price_at_timestamp(klines_eth, event_timestamp)
-
-            if btc_price_event and eth_price_event:
-                temp_btc += (capital_change * PORTFOLIO_WEIGHTS['BTC']) / btc_price_event
-                temp_eth += (capital_change * PORTFOLIO_WEIGHTS['ETH']) / eth_price_event
-                temp_usdt += capital_change * PORTFOLIO_WEIGHTS['USDT']
-
-        # Get prices for THIS date to calculate value
-        btc_price = get_price_at_timestamp(klines_btc, date_dt)
-        eth_price = get_price_at_timestamp(klines_eth, date_dt)
-
-        if btc_price is None or eth_price is None:
-            continue
-
-        portfolio_value = (
-            temp_btc * btc_price +
-            temp_eth * eth_price +
-            temp_usdt
-        )
-
-        equity_data.append({
-            'date': date,
-            'equity_usdt': portfolio_value,
-            'btc_value': temp_btc * btc_price,
-            'eth_value': temp_eth * eth_price,
-            'usdt_value': temp_usdt
-        })
-
-    equity_df = pd.DataFrame(equity_data)
-
-    if not equity_df.empty:
-        logger.info(f"Final hypothetical equity: ${equity_df.iloc[-1]['equity_usdt']:,.2f}")
-
-    return equity_df
-
-
-def build_actual_portfolio(client: Client, events_df: pd.DataFrame, klines_btc: pd.DataFrame,
-                          klines_eth: pd.DataFrame, end_date, lookback_days: int) -> pd.DataFrame:
-    """Build actual portfolio equity curve from trades and cash flows"""
-    logger.info("Building actual portfolio equity curve...")
-
-    # Get current actual balances for validation
-    current_balances = get_current_balances(client)
-
-    # Fetch spot trades filtered to the SAME time window as cash flows
-    trades_btc = fetch_spot_trade_history(client, 'BTCUSDT', days=lookback_days)
-    trades_eth = fetch_spot_trade_history(client, 'ETHUSDT', days=lookback_days)
+    # Fetch trades for both pairs
+    trades_btc = fetch_spot_trade_history(client, 'BTCUSDT', days=days)
+    trades_eth = fetch_spot_trade_history(client, 'ETHUSDT', days=days)
 
     # Combine all trades
     all_trades = pd.concat([trades_btc, trades_eth], ignore_index=True)
-    if not all_trades.empty:
-        all_trades = all_trades.sort_values('timestamp').reset_index(drop=True)
-        logger.info(f"Total spot trades in {lookback_days}-day window: {len(all_trades)}")
 
-    # Process events and trades chronologically
-    start_date = events_df['timestamp'].min().date() if not events_df.empty else (datetime.now() - timedelta(days=lookback_days)).date()
+    if all_trades.empty:
+        logger.warning("No trades found in the specified period")
+        return pd.DataFrame()
+
+    # Sort by timestamp
+    all_trades = all_trades.sort_values('timestamp').reset_index(drop=True)
+
+    # Attach historical prices for BTC and ETH at each trade timestamp
+    btc_prices = []
+    eth_prices = []
+
+    for _, trade in all_trades.iterrows():
+        btc_price = get_price_at_timestamp(klines_btc, trade['timestamp'])
+        eth_price = get_price_at_timestamp(klines_eth, trade['timestamp'])
+        btc_prices.append(btc_price)
+        eth_prices.append(eth_price)
+
+    all_trades['btc_price'] = btc_prices
+    all_trades['eth_price'] = eth_prices
+
+    logger.info(f"Built trades table with {len(all_trades)} trades")
+
+    return all_trades
+
+
+def calculate_initial_allocation(trades_df: pd.DataFrame, klines_btc: pd.DataFrame,
+                                  klines_eth: pd.DataFrame, start_date: datetime) -> Dict[str, float]:
+    """
+    Calculate initial allocation using smart initialization.
+
+    Strategy:
+    1. Start with 33/33/34 baseline allocation
+    2. Replay all trades to find minimum holdings for each asset
+    3. If any asset goes negative, increase its initial allocation
+    4. Adjust USDT to keep total at $3000
+
+    Returns dict with initial holdings: {'BTC': x, 'ETH': y, 'USDT': z}
+    """
+    logger.info("Calculating smart initial allocation...")
+
+    # Get prices at start date for initial allocation
+    start_timestamp = pd.Timestamp(start_date)
+    btc_price_start = get_price_at_timestamp(klines_btc, start_timestamp)
+    eth_price_start = get_price_at_timestamp(klines_eth, start_timestamp)
+
+    if btc_price_start is None or eth_price_start is None:
+        # Fallback to first available price
+        btc_price_start = klines_btc['close'].iloc[0] if not klines_btc.empty else 60000
+        eth_price_start = klines_eth['close'].iloc[0] if not klines_eth.empty else 3000
+
+    # Base allocation: 33/33/34
+    base_btc = (INITIAL_CAPITAL * PORTFOLIO_WEIGHTS['BTC']) / btc_price_start
+    base_eth = (INITIAL_CAPITAL * PORTFOLIO_WEIGHTS['ETH']) / eth_price_start
+    base_usdt = INITIAL_CAPITAL * PORTFOLIO_WEIGHTS['USDT']
+
+    if trades_df.empty:
+        return {
+            'BTC': base_btc,
+            'ETH': base_eth,
+            'USDT': base_usdt,
+            'btc_price_start': btc_price_start,
+            'eth_price_start': eth_price_start
+        }
+
+    # Replay trades to find minimum holdings
+    holdings = {'BTC': base_btc, 'ETH': base_eth, 'USDT': base_usdt}
+    min_holdings = {'BTC': base_btc, 'ETH': base_eth, 'USDT': base_usdt}
+
+    for _, trade in trades_df.iterrows():
+        if trade['symbol'] == 'BTCUSDT':
+            if trade['side'] == 'BUY':
+                holdings['BTC'] += trade['qty']
+                holdings['USDT'] -= trade['quote_qty']
+            else:  # SELL
+                holdings['BTC'] -= trade['qty']
+                holdings['USDT'] += trade['quote_qty']
+        elif trade['symbol'] == 'ETHUSDT':
+            if trade['side'] == 'BUY':
+                holdings['ETH'] += trade['qty']
+                holdings['USDT'] -= trade['quote_qty']
+            else:  # SELL
+                holdings['ETH'] -= trade['qty']
+                holdings['USDT'] += trade['quote_qty']
+
+        # Handle commission
+        comm_asset = trade['commission_asset']
+        if comm_asset in holdings:
+            holdings[comm_asset] -= trade['commission']
+
+        # Track minimum
+        for asset in ['BTC', 'ETH', 'USDT']:
+            min_holdings[asset] = min(min_holdings[asset], holdings[asset])
+
+    # Adjust initial allocation if any minimum is negative
+    adjustment_needed = False
+    adjustments = {'BTC': 0.0, 'ETH': 0.0, 'USDT': 0.0}
+
+    for asset in ['BTC', 'ETH']:
+        if min_holdings[asset] < 0:
+            adjustment_needed = True
+            # Need to add enough to make minimum = 0 (with small buffer)
+            deficit = abs(min_holdings[asset]) * 1.01  # 1% buffer
+            adjustments[asset] = deficit
+            logger.info(f"Adjusting initial {asset} allocation by +{deficit:.8f} to prevent negative holdings")
+
+    if adjustment_needed:
+        # Calculate USD value of adjustments
+        btc_adjustment_usd = adjustments['BTC'] * btc_price_start
+        eth_adjustment_usd = adjustments['ETH'] * eth_price_start
+        total_adjustment_usd = btc_adjustment_usd + eth_adjustment_usd
+
+        # Reduce USDT allocation to compensate
+        final_allocation = {
+            'BTC': base_btc + adjustments['BTC'],
+            'ETH': base_eth + adjustments['ETH'],
+            'USDT': base_usdt - total_adjustment_usd
+        }
+
+        # Check if USDT went negative - if so, we need to scale down
+        if final_allocation['USDT'] < 0:
+            logger.warning("USDT allocation went negative, scaling all allocations proportionally")
+            # Scale everything to fit within $3000
+            total_needed = (final_allocation['BTC'] * btc_price_start +
+                          final_allocation['ETH'] * eth_price_start)
+            if total_needed > INITIAL_CAPITAL:
+                scale = INITIAL_CAPITAL / total_needed * 0.95  # Leave 5% for USDT
+                final_allocation['BTC'] *= scale
+                final_allocation['ETH'] *= scale
+                final_allocation['USDT'] = INITIAL_CAPITAL - (final_allocation['BTC'] * btc_price_start +
+                                                              final_allocation['ETH'] * eth_price_start)
+    else:
+        final_allocation = {
+            'BTC': base_btc,
+            'ETH': base_eth,
+            'USDT': base_usdt
+        }
+
+    final_allocation['btc_price_start'] = btc_price_start
+    final_allocation['eth_price_start'] = eth_price_start
+
+    # Log final allocation
+    total_value = (final_allocation['BTC'] * btc_price_start +
+                   final_allocation['ETH'] * eth_price_start +
+                   final_allocation['USDT'])
+    logger.info(f"Final initial allocation: BTC={final_allocation['BTC']:.8f} (${final_allocation['BTC'] * btc_price_start:.2f}), "
+                f"ETH={final_allocation['ETH']:.8f} (${final_allocation['ETH'] * eth_price_start:.2f}), "
+                f"USDT=${final_allocation['USDT']:.2f}, Total=${total_value:.2f}")
+
+    return final_allocation
+
+
+def build_actual_portfolio(trades_df: pd.DataFrame, initial_allocation: Dict[str, float],
+                           klines_btc: pd.DataFrame, klines_eth: pd.DataFrame,
+                           start_date: datetime, end_date: datetime) -> pd.DataFrame:
+    """
+    Build actual portfolio equity curve by replaying trades.
+
+    Starting from initial_allocation, replay each trade and calculate daily portfolio value.
+    """
+    logger.info("Building actual portfolio equity curve...")
+
     date_range = pd.date_range(start=start_date, end=end_date, freq='D')
-
     equity_data = []
 
     for date in date_range:
         date_dt = pd.Timestamp(date)
 
-        # Apply cash flow events up to this date
-        events_to_date = events_df[events_df['timestamp'].dt.date <= date.date()]
-
-        # Reset holdings and replay all events/trades
-        temp_holdings = {'BTC': 0.0, 'ETH': 0.0, 'USDT': 0.0}
-
-        # Apply cash flow events
-        for _, event in events_to_date.iterrows():
-            if event['type'] == 'P2P_BUY':
-                temp_holdings[event['asset']] += event['crypto_amount']
-            elif event['type'] == 'P2P_SELL':
-                temp_holdings[event['asset']] += event['crypto_amount']  # Already negative
-            elif event['type'] == 'DEPOSIT':
-                temp_holdings[event['asset']] += event['crypto_amount']
+        # Start with initial allocation
+        holdings = {
+            'BTC': initial_allocation['BTC'],
+            'ETH': initial_allocation['ETH'],
+            'USDT': initial_allocation['USDT']
+        }
 
         # Apply trades up to this date
-        if not all_trades.empty:
-            trades_to_date = all_trades[all_trades['timestamp'].dt.date <= date.date()]
+        if not trades_df.empty:
+            trades_to_date = trades_df[trades_df['timestamp'].dt.date <= date.date()]
 
             for _, trade in trades_to_date.iterrows():
                 if trade['symbol'] == 'BTCUSDT':
                     if trade['side'] == 'BUY':
-                        temp_holdings['BTC'] += trade['qty']
-                        temp_holdings['USDT'] -= trade['quote_qty']
+                        holdings['BTC'] += trade['qty']
+                        holdings['USDT'] -= trade['quote_qty']
                     else:  # SELL
-                        temp_holdings['BTC'] -= trade['qty']
-                        temp_holdings['USDT'] += trade['quote_qty']
+                        holdings['BTC'] -= trade['qty']
+                        holdings['USDT'] += trade['quote_qty']
                 elif trade['symbol'] == 'ETHUSDT':
                     if trade['side'] == 'BUY':
-                        temp_holdings['ETH'] += trade['qty']
-                        temp_holdings['USDT'] -= trade['quote_qty']
+                        holdings['ETH'] += trade['qty']
+                        holdings['USDT'] -= trade['quote_qty']
                     else:  # SELL
-                        temp_holdings['ETH'] -= trade['qty']
-                        temp_holdings['USDT'] += trade['quote_qty']
+                        holdings['ETH'] -= trade['qty']
+                        holdings['USDT'] += trade['quote_qty']
 
                 # Handle commission
                 comm_asset = trade['commission_asset']
-                if comm_asset in temp_holdings:
-                    temp_holdings[comm_asset] -= trade['commission']
+                if comm_asset in holdings:
+                    holdings[comm_asset] -= trade['commission']
 
-        # Get prices for THIS date
+        # Get prices for this date
         btc_price = get_price_at_timestamp(klines_btc, date_dt)
         eth_price = get_price_at_timestamp(klines_eth, date_dt)
 
@@ -508,23 +379,102 @@ def build_actual_portfolio(client: Client, events_df: pd.DataFrame, klines_btc: 
 
         # Calculate portfolio value
         portfolio_value = (
-            temp_holdings['BTC'] * btc_price +
-            temp_holdings['ETH'] * eth_price +
-            temp_holdings['USDT']
+            holdings['BTC'] * btc_price +
+            holdings['ETH'] * eth_price +
+            holdings['USDT']
         )
 
         equity_data.append({
             'date': date,
             'equity_usdt': portfolio_value,
-            'btc_holdings': temp_holdings['BTC'],
-            'eth_holdings': temp_holdings['ETH'],
-            'usdt_holdings': temp_holdings['USDT']
+            'btc_holdings': holdings['BTC'],
+            'eth_holdings': holdings['ETH'],
+            'usdt_holdings': holdings['USDT'],
+            'btc_price': btc_price,
+            'eth_price': eth_price
         })
 
     equity_df = pd.DataFrame(equity_data)
 
     if not equity_df.empty:
-        logger.info(f"Calculated final equity: ${equity_df.iloc[-1]['equity_usdt']:,.2f}")
+        logger.info(f"Actual portfolio: Start=${equity_df.iloc[0]['equity_usdt']:,.2f}, "
+                   f"End=${equity_df.iloc[-1]['equity_usdt']:,.2f}")
+
+    return equity_df
+
+
+def build_benchmark_portfolio(trades_df: pd.DataFrame, initial_allocation: Dict[str, float],
+                              klines_btc: pd.DataFrame, klines_eth: pd.DataFrame,
+                              start_date: datetime, end_date: datetime) -> pd.DataFrame:
+    """
+    Build benchmark portfolio equity curve (33/33/34 allocation).
+
+    Benchmark rebalances to target weights on each actual trade timestamp.
+    """
+    logger.info("Building benchmark portfolio equity curve (33% BTC, 33% ETH, 34% USDT)...")
+
+    date_range = pd.date_range(start=start_date, end=end_date, freq='D')
+
+    # Get trade timestamps for rebalancing
+    rebalance_dates = set()
+    if not trades_df.empty:
+        rebalance_dates = set(trades_df['timestamp'].dt.date.tolist())
+
+    # Initial benchmark allocation (same starting point as actual for fair comparison)
+    benchmark_holdings = {
+        'BTC': initial_allocation['BTC'],
+        'ETH': initial_allocation['ETH'],
+        'USDT': initial_allocation['USDT']
+    }
+
+    equity_data = []
+
+    for date in date_range:
+        date_dt = pd.Timestamp(date)
+
+        # Get prices for this date
+        btc_price = get_price_at_timestamp(klines_btc, date_dt)
+        eth_price = get_price_at_timestamp(klines_eth, date_dt)
+
+        if btc_price is None or eth_price is None:
+            continue
+
+        # Rebalance if this is a trade date
+        if date.date() in rebalance_dates:
+            # Calculate current portfolio value
+            current_value = (
+                benchmark_holdings['BTC'] * btc_price +
+                benchmark_holdings['ETH'] * eth_price +
+                benchmark_holdings['USDT']
+            )
+
+            # Rebalance to target weights
+            benchmark_holdings['BTC'] = (current_value * PORTFOLIO_WEIGHTS['BTC']) / btc_price
+            benchmark_holdings['ETH'] = (current_value * PORTFOLIO_WEIGHTS['ETH']) / eth_price
+            benchmark_holdings['USDT'] = current_value * PORTFOLIO_WEIGHTS['USDT']
+
+        # Calculate portfolio value
+        portfolio_value = (
+            benchmark_holdings['BTC'] * btc_price +
+            benchmark_holdings['ETH'] * eth_price +
+            benchmark_holdings['USDT']
+        )
+
+        equity_data.append({
+            'date': date,
+            'equity_usdt': portfolio_value,
+            'btc_holdings': benchmark_holdings['BTC'],
+            'eth_holdings': benchmark_holdings['ETH'],
+            'usdt_holdings': benchmark_holdings['USDT'],
+            'btc_price': btc_price,
+            'eth_price': eth_price
+        })
+
+    equity_df = pd.DataFrame(equity_data)
+
+    if not equity_df.empty:
+        logger.info(f"Benchmark portfolio: Start=${equity_df.iloc[0]['equity_usdt']:,.2f}, "
+                   f"End=${equity_df.iloc[-1]['equity_usdt']:,.2f}")
 
     return equity_df
 
@@ -533,15 +483,15 @@ def build_actual_portfolio(client: Client, events_df: pd.DataFrame, klines_btc: 
 # METRICS AND VISUALIZATION
 # ============================================================================
 
-def calculate_metrics(actual_df: pd.DataFrame, hypothetical_df: pd.DataFrame,
-                     total_invested: float) -> Tuple[Dict, pd.DataFrame]:
+def calculate_metrics(actual_df: pd.DataFrame, benchmark_df: pd.DataFrame,
+                      trades_df: pd.DataFrame) -> Tuple[Dict, pd.DataFrame]:
     """Calculate comparison metrics"""
     logger.info("Calculating performance metrics...")
 
     # Merge dataframes
     merged = pd.merge(
         actual_df[['date', 'equity_usdt']].rename(columns={'equity_usdt': 'actual'}),
-        hypothetical_df[['date', 'equity_usdt']].rename(columns={'equity_usdt': 'hypothetical'}),
+        benchmark_df[['date', 'equity_usdt']].rename(columns={'equity_usdt': 'benchmark'}),
         on='date',
         how='outer'
     ).sort_values('date')
@@ -549,36 +499,50 @@ def calculate_metrics(actual_df: pd.DataFrame, hypothetical_df: pd.DataFrame,
     merged = merged.ffill().bfill()
 
     # Calculate metrics
+    actual_start = merged['actual'].iloc[0]
     actual_final = merged['actual'].iloc[-1]
-    hypo_final = merged['hypothetical'].iloc[-1]
+    benchmark_start = merged['benchmark'].iloc[0]
+    benchmark_final = merged['benchmark'].iloc[-1]
 
-    actual_return = ((actual_final - total_invested) / total_invested) * 100 if total_invested > 0 else 0
-    hypo_return = ((hypo_final - total_invested) / total_invested) * 100 if total_invested > 0 else 0
+    actual_return = ((actual_final - actual_start) / actual_start) * 100
+    benchmark_return = ((benchmark_final - benchmark_start) / benchmark_start) * 100
 
     # Maximum drawdown
     actual_peak = merged['actual'].expanding().max()
     actual_dd = ((merged['actual'] - actual_peak) / actual_peak * 100).min()
 
-    hypo_peak = merged['hypothetical'].expanding().max()
-    hypo_dd = ((merged['hypothetical'] - hypo_peak) / hypo_peak * 100).min()
+    benchmark_peak = merged['benchmark'].expanding().max()
+    benchmark_dd = ((merged['benchmark'] - benchmark_peak) / benchmark_peak * 100).min()
+
+    # Trade statistics
+    total_trades = len(trades_df) if not trades_df.empty else 0
+    buy_trades = len(trades_df[trades_df['side'] == 'BUY']) if not trades_df.empty else 0
+    sell_trades = len(trades_df[trades_df['side'] == 'SELL']) if not trades_df.empty else 0
 
     metrics = {
-        'total_invested': total_invested,
+        'initial_capital': INITIAL_CAPITAL,
         'actual': {
+            'start': actual_start,
             'final': actual_final,
             'return_pct': actual_return,
-            'profit_loss': actual_final - total_invested,
+            'profit_loss': actual_final - actual_start,
             'max_drawdown_pct': actual_dd
         },
-        'hypothetical': {
-            'final': hypo_final,
-            'return_pct': hypo_return,
-            'profit_loss': hypo_final - total_invested,
-            'max_drawdown_pct': hypo_dd
+        'benchmark': {
+            'start': benchmark_start,
+            'final': benchmark_final,
+            'return_pct': benchmark_return,
+            'profit_loss': benchmark_final - benchmark_start,
+            'max_drawdown_pct': benchmark_dd
+        },
+        'trade_stats': {
+            'total_trades': total_trades,
+            'buy_trades': buy_trades,
+            'sell_trades': sell_trades
         }
     }
 
-    logger.info(f"Actual return: {actual_return:+.2f}%, Hypothetical return: {hypo_return:+.2f}%")
+    logger.info(f"Actual return: {actual_return:+.2f}%, Benchmark return: {benchmark_return:+.2f}%")
 
     return metrics, merged
 
@@ -590,23 +554,23 @@ def create_visualization(merged_df: pd.DataFrame, metrics: Dict, output_path: Pa
     fig, ax = plt.subplots(figsize=FIGURE_SIZE, dpi=DPI)
 
     ax.plot(merged_df['date'], merged_df['actual'],
-            label='Actual Trading (Spot Only)', linewidth=2.5, color='#2E86AB')
-    ax.plot(merged_df['date'], merged_df['hypothetical'],
-            label='Buy-and-Hold (33% BTC, 33% ETH, 33% USDT)', linewidth=2.5,
+            label='Actual Trading Portfolio', linewidth=2.5, color='#2E86AB')
+    ax.plot(merged_df['date'], merged_df['benchmark'],
+            label='Benchmark (33% BTC, 33% ETH, 34% USDT)', linewidth=2.5,
             color='#A23B72', linestyle='--')
 
     ax.set_xlabel('Date', fontsize=12, fontweight='bold')
     ax.set_ylabel('Portfolio Value (USDT)', fontsize=12, fontweight='bold')
-    ax.set_title('Portfolio Performance: Event-Based Analysis\nActual Trading vs Buy-and-Hold Strategy',
+    ax.set_title('Portfolio Performance: Trading vs Benchmark\n$3,000 Initial Capital',
                  fontsize=15, fontweight='bold', pad=20)
     ax.legend(fontsize=11, loc='best')
     ax.grid(True, alpha=0.3, linestyle=':')
     ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda x, p: f'${x:,.0f}'))
 
     # Add metrics box
-    outperformance = metrics['actual']['return_pct'] - metrics['hypothetical']['return_pct']
+    outperformance = metrics['actual']['return_pct'] - metrics['benchmark']['return_pct']
     metrics_text = (
-        f"INVESTED: ${metrics['total_invested']:,.2f}\n"
+        f"INITIAL CAPITAL: ${metrics['initial_capital']:,.2f}\n"
         f"\n"
         f"ACTUAL TRADING\n"
         f"  Final: ${metrics['actual']['final']:,.2f}\n"
@@ -614,13 +578,14 @@ def create_visualization(merged_df: pd.DataFrame, metrics: Dict, output_path: Pa
         f"  P/L: ${metrics['actual']['profit_loss']:+,.2f}\n"
         f"  Max DD: {metrics['actual']['max_drawdown_pct']:.2f}%\n"
         f"\n"
-        f"BUY-AND-HOLD\n"
-        f"  Final: ${metrics['hypothetical']['final']:,.2f}\n"
-        f"  Return: {metrics['hypothetical']['return_pct']:+.2f}%\n"
-        f"  P/L: ${metrics['hypothetical']['profit_loss']:+,.2f}\n"
-        f"  Max DD: {metrics['hypothetical']['max_drawdown_pct']:.2f}%\n"
+        f"BENCHMARK (33/33/34)\n"
+        f"  Final: ${metrics['benchmark']['final']:,.2f}\n"
+        f"  Return: {metrics['benchmark']['return_pct']:+.2f}%\n"
+        f"  P/L: ${metrics['benchmark']['profit_loss']:+,.2f}\n"
+        f"  Max DD: {metrics['benchmark']['max_drawdown_pct']:.2f}%\n"
         f"\n"
-        f"Outperformance: {outperformance:+.2f}%"
+        f"Outperformance: {outperformance:+.2f}%\n"
+        f"Total Trades: {metrics['trade_stats']['total_trades']}"
     )
 
     props = dict(boxstyle='round', facecolor='wheat', alpha=0.85)
@@ -634,65 +599,66 @@ def create_visualization(merged_df: pd.DataFrame, metrics: Dict, output_path: Pa
     logger.info(f"Saved visualization: {output_path.name}")
 
 
-def build_markdown_report(events_df: pd.DataFrame, metrics: Dict) -> str:
+def build_markdown_report(trades_df: pd.DataFrame, metrics: Dict, initial_allocation: Dict) -> str:
     """Build markdown-formatted performance report"""
 
-    # Cash flow summary
-    p2p_buy_total = events_df[events_df['type'] == 'P2P_BUY']['usd_value'].sum() if not events_df.empty else 0
-    p2p_sell_total = abs(events_df[events_df['type'] == 'P2P_SELL']['usd_value'].sum()) if not events_df.empty else 0
-    deposit_total = events_df[events_df['type'] == 'DEPOSIT']['usd_value'].sum() if not events_df.empty else 0
-
-    outperformance = metrics['actual']['return_pct'] - metrics['hypothetical']['return_pct']
-    outperf_verdict = "✓ Trading strategy outperformed buy-and-hold" if outperformance > 0 else "✗ Trading strategy underperformed buy-and-hold"
+    outperformance = metrics['actual']['return_pct'] - metrics['benchmark']['return_pct']
+    outperf_verdict = "Trading strategy outperformed benchmark" if outperformance > 0 else "Trading strategy underperformed benchmark"
 
     report = f"""# Portfolio Performance Report
 
-## Capital Invested Summary
+## Initial Setup
 
-**Total Capital Invested:** ${metrics['total_invested']:,.2f}
+**Initial Capital:** ${metrics['initial_capital']:,.2f}
 
-- **P2P BUY (deposits):** ${p2p_buy_total:,.2f}
-- **P2P SELL (withdrawals):** ${p2p_sell_total:,.2f}
-- **CRYPTO DEPOSITS:** ${deposit_total:,.2f}
+**Initial Allocation:**
+- BTC: {initial_allocation['BTC']:.8f} (${initial_allocation['BTC'] * initial_allocation['btc_price_start']:,.2f})
+- ETH: {initial_allocation['ETH']:.8f} (${initial_allocation['ETH'] * initial_allocation['eth_price_start']:,.2f})
+- USDT: ${initial_allocation['USDT']:,.2f}
 
 ---
 
 ## Performance Metrics
 
-### ACTUAL TRADING
-- **Final Equity:** ${metrics['actual']['final']:,.2f}
+### ACTUAL TRADING PORTFOLIO
+- **Starting Value:** ${metrics['actual']['start']:,.2f}
+- **Final Value:** ${metrics['actual']['final']:,.2f}
 - **Return:** {metrics['actual']['return_pct']:+.2f}%
 - **Profit/Loss:** ${metrics['actual']['profit_loss']:+,.2f}
 - **Max Drawdown:** {metrics['actual']['max_drawdown_pct']:.2f}%
 
-### BUY-AND-HOLD (33% BTC, 33% ETH, 33% USDT)
-- **Final Equity:** ${metrics['hypothetical']['final']:,.2f}
-- **Return:** {metrics['hypothetical']['return_pct']:+.2f}%
-- **Profit/Loss:** ${metrics['hypothetical']['profit_loss']:+,.2f}
-- **Max Drawdown:** {metrics['hypothetical']['max_drawdown_pct']:.2f}%
+### BENCHMARK (33% BTC, 33% ETH, 34% USDT)
+- **Starting Value:** ${metrics['benchmark']['start']:,.2f}
+- **Final Value:** ${metrics['benchmark']['final']:,.2f}
+- **Return:** {metrics['benchmark']['return_pct']:+.2f}%
+- **Profit/Loss:** ${metrics['benchmark']['profit_loss']:+,.2f}
+- **Max Drawdown:** {metrics['benchmark']['max_drawdown_pct']:.2f}%
 
 ---
 
-## Outperformance Analysis
+## Comparison Analysis
 
 **Outperformance:** {outperformance:+.2f}%
 
-{outperf_verdict}
+**Verdict:** {outperf_verdict}
 
 ---
 
-## Cash Flow Events
+## Trade Statistics
 
-Total events: {len(events_df)}
+- **Total Trades:** {metrics['trade_stats']['total_trades']}
+- **Buy Trades:** {metrics['trade_stats']['buy_trades']}
+- **Sell Trades:** {metrics['trade_stats']['sell_trades']}
 
 """
 
-    # Add top events
-    if not events_df.empty and len(events_df) > 0:
-        report += "\n### Recent Events\n\n"
-        for _, event in events_df.tail(min(10, len(events_df))).iterrows():
-            sign = "+" if event['usd_value'] > 0 else ""
-            report += f"- **{event['timestamp'].strftime('%Y-%m-%d %H:%M')}** | {event['type']} | {sign}${event['usd_value']:,.2f} | {event['description']}\n"
+    # Add recent trades
+    if not trades_df.empty and len(trades_df) > 0:
+        report += "\n### Recent Trades\n\n"
+        report += "| Time | Symbol | Side | Qty | Price | Value |\n"
+        report += "|------|--------|------|-----|-------|-------|\n"
+        for _, trade in trades_df.tail(min(10, len(trades_df))).iterrows():
+            report += f"| {trade['timestamp'].strftime('%Y-%m-%d %H:%M')} | {trade['symbol']} | {trade['side']} | {trade['qty']:.6f} | ${trade['price']:,.2f} | ${trade['quote_qty']:,.2f} |\n"
 
     return report
 
@@ -713,8 +679,8 @@ def fetch_portfolio_performance(binance_client: Client, csv_dir: Path, days: int
 
     Returns:
         Dictionary with:
+        - trades_csv_path: Path to trades table CSV
         - equity_csv_path: Path to equity curves CSV
-        - events_csv_path: Path to cash flow events CSV
         - metrics_csv_path: Path to metrics CSV
         - png_path: Path to visualization PNG
         - markdown_report: Formatted markdown report string
@@ -723,14 +689,7 @@ def fetch_portfolio_performance(binance_client: Client, csv_dir: Path, days: int
     logger.info(f"Starting portfolio performance analysis for last {days} days")
 
     try:
-        # Fetch data
-        logger.info("Fetching P2P history...")
-        p2p_buy = fetch_p2p_history(binance_client, 'BUY', days=days)
-        p2p_sell = fetch_p2p_history(binance_client, 'SELL', days=days)
-
-        logger.info("Fetching deposit history...")
-        deposits = fetch_deposit_history(binance_client, days=days)
-
+        # Fetch historical prices
         logger.info("Fetching historical prices...")
         klines_btc = fetch_historical_klines(binance_client, 'BTCUSDT', interval='1h', days=days)
         klines_eth = fetch_historical_klines(binance_client, 'ETHUSDT', interval='1h', days=days)
@@ -738,73 +697,89 @@ def fetch_portfolio_performance(binance_client: Client, csv_dir: Path, days: int
         if klines_btc.empty or klines_eth.empty:
             raise ValueError("Failed to fetch historical price data")
 
-        # Build cash flow timeline
-        events_df = build_cash_flow_timeline(p2p_buy, p2p_sell, deposits, klines_btc, klines_eth)
+        # Build trades table
+        trades_df = build_trades_table(binance_client, days, klines_btc, klines_eth)
 
-        if events_df.empty:
-            raise ValueError("No cash flow events found in the specified period")
-
-        total_invested = events_df['cumulative_invested'].iloc[-1]
+        # Determine date range
         end_date = datetime.now().date()
+        if not trades_df.empty:
+            start_date = trades_df['timestamp'].min().date()
+        else:
+            start_date = (datetime.now() - timedelta(days=days)).date()
+
+        # Calculate smart initial allocation
+        initial_allocation = calculate_initial_allocation(trades_df, klines_btc, klines_eth, start_date)
 
         # Build portfolios
-        hypothetical_equity = build_hypothetical_portfolio(events_df, klines_btc, klines_eth, end_date)
-        actual_equity = build_actual_portfolio(binance_client, events_df, klines_btc, klines_eth, end_date, days)
+        actual_equity = build_actual_portfolio(trades_df, initial_allocation, klines_btc, klines_eth, start_date, end_date)
+        benchmark_equity = build_benchmark_portfolio(trades_df, initial_allocation, klines_btc, klines_eth, start_date, end_date)
 
-        if hypothetical_equity.empty or actual_equity.empty:
+        if actual_equity.empty or benchmark_equity.empty:
             raise ValueError("Failed to build equity curves")
 
         # Calculate metrics
-        metrics, merged = calculate_metrics(actual_equity, hypothetical_equity, total_invested)
+        metrics, merged = calculate_metrics(actual_equity, benchmark_equity, trades_df)
 
         # Generate unique ID for this report
         report_id = str(uuid.uuid4())[:8]
 
-        # Save CSV files
-        equity_csv_path = csv_dir / f"portfolio_performance_equity_{report_id}.csv"
+        # Save trades table CSV
+        trades_csv_path = csv_dir / f"portfolio_trades_{report_id}.csv"
+        if not trades_df.empty:
+            trades_df.to_csv(trades_csv_path, index=False)
+            logger.info(f"Saved trades CSV: {trades_csv_path.name}")
+        else:
+            # Create empty CSV with headers
+            pd.DataFrame(columns=['timestamp', 'symbol', 'side', 'qty', 'quote_qty', 'price',
+                                  'commission', 'commission_asset', 'btc_price', 'eth_price']).to_csv(trades_csv_path, index=False)
+
+        # Save equity curves CSV
+        equity_csv_path = csv_dir / f"portfolio_equity_{report_id}.csv"
         merged.to_csv(equity_csv_path, index=False)
         logger.info(f"Saved equity curves CSV: {equity_csv_path.name}")
 
-        events_csv_path = csv_dir / f"portfolio_performance_events_{report_id}.csv"
-        events_df.to_csv(events_csv_path, index=False)
-        logger.info(f"Saved cash flow events CSV: {events_csv_path.name}")
-
         # Convert metrics to CSV format
         metrics_records = [
-            {'metric': 'total_invested', 'value': metrics['total_invested']},
+            {'metric': 'initial_capital', 'value': metrics['initial_capital']},
+            {'metric': 'actual_start', 'value': metrics['actual']['start']},
             {'metric': 'actual_final', 'value': metrics['actual']['final']},
             {'metric': 'actual_return_pct', 'value': metrics['actual']['return_pct']},
             {'metric': 'actual_profit_loss', 'value': metrics['actual']['profit_loss']},
             {'metric': 'actual_max_drawdown_pct', 'value': metrics['actual']['max_drawdown_pct']},
-            {'metric': 'hypothetical_final', 'value': metrics['hypothetical']['final']},
-            {'metric': 'hypothetical_return_pct', 'value': metrics['hypothetical']['return_pct']},
-            {'metric': 'hypothetical_profit_loss', 'value': metrics['hypothetical']['profit_loss']},
-            {'metric': 'hypothetical_max_drawdown_pct', 'value': metrics['hypothetical']['max_drawdown_pct']},
-            {'metric': 'outperformance_pct', 'value': metrics['actual']['return_pct'] - metrics['hypothetical']['return_pct']}
+            {'metric': 'benchmark_start', 'value': metrics['benchmark']['start']},
+            {'metric': 'benchmark_final', 'value': metrics['benchmark']['final']},
+            {'metric': 'benchmark_return_pct', 'value': metrics['benchmark']['return_pct']},
+            {'metric': 'benchmark_profit_loss', 'value': metrics['benchmark']['profit_loss']},
+            {'metric': 'benchmark_max_drawdown_pct', 'value': metrics['benchmark']['max_drawdown_pct']},
+            {'metric': 'outperformance_pct', 'value': metrics['actual']['return_pct'] - metrics['benchmark']['return_pct']},
+            {'metric': 'total_trades', 'value': metrics['trade_stats']['total_trades']},
+            {'metric': 'buy_trades', 'value': metrics['trade_stats']['buy_trades']},
+            {'metric': 'sell_trades', 'value': metrics['trade_stats']['sell_trades']}
         ]
         metrics_df = pd.DataFrame(metrics_records)
-        metrics_csv_path = csv_dir / f"portfolio_performance_metrics_{report_id}.csv"
+        metrics_csv_path = csv_dir / f"portfolio_metrics_{report_id}.csv"
         metrics_df.to_csv(metrics_csv_path, index=False)
         logger.info(f"Saved metrics CSV: {metrics_csv_path.name}")
 
         # Generate visualization
-        png_path = csv_dir / f"portfolio_performance_chart_{report_id}.png"
+        png_path = csv_dir / f"portfolio_chart_{report_id}.png"
         create_visualization(merged, metrics, png_path)
 
         # Build markdown report
-        markdown_report = build_markdown_report(events_df, metrics)
+        markdown_report = build_markdown_report(trades_df, metrics, initial_allocation)
 
         logger.info("Portfolio performance analysis completed successfully")
 
         return {
+            'trades_csv_path': trades_csv_path,
             'equity_csv_path': equity_csv_path,
-            'events_csv_path': events_csv_path,
             'metrics_csv_path': metrics_csv_path,
             'png_path': png_path,
             'markdown_report': markdown_report,
             'metrics': metrics,
             'merged_df': merged,
-            'events_df': events_df
+            'trades_df': trades_df,
+            'initial_allocation': initial_allocation
         }
 
     except Exception as e:
@@ -822,81 +797,60 @@ def register_binance_portfolio_performance(local_mcp_instance, local_binance_cli
     @local_mcp_instance.tool()
     def binance_portfolio_performance(days: int = 30) -> list[Any]:
         """
-        Generate a comprehensive portfolio performance report comparing actual trading results
-        against a hypothetical buy-and-hold strategy (33% BTC, 33% ETH, 33% USDT).
+        Generate a comprehensive portfolio performance report comparing your actual trading
+        results against a benchmark buy-and-hold strategy (33% BTC, 33% ETH, 34% USDT).
 
-        This tool analyzes your trading performance using actual capitalization events from:
-        - P2P trading history (BUY/SELL transactions)
-        - Deposit history (crypto inflows)
-        - Spot trading history
+        **How it works:**
+        - Uses a fixed $3,000 initial capital baseline
+        - Both portfolios start with the same initial allocation
+        - Actual portfolio tracks your real spot trades (BTCUSDT, ETHUSDT)
+        - Benchmark rebalances to 33/33/34 weights on each trade date
+        - Smart initialization prevents negative holdings
 
-        It generates multiple outputs:
-        1. Equity curves CSV (daily portfolio values)
-        2. Cash flow events CSV (all P2P and deposit events)
-        3. Performance metrics CSV (returns, P/L, drawdowns)
-        4. Visualization PNG chart (equity curves comparison)
-        5. Markdown-formatted performance report
+        **Generated outputs:**
+        1. **Trades Table CSV** - All your trades with historical prices attached
+        2. **Equity Curves CSV** - Daily portfolio values (actual vs benchmark)
+        3. **Metrics CSV** - Returns, P/L, drawdowns, trade statistics
+        4. **Chart PNG** - Visual comparison of equity curves
+        5. **Markdown Report** - Comprehensive performance summary
 
         Parameters:
             days (int): Number of days to analyze (default: 30)
 
         Returns:
-            list: [ImageContent, str] - Portfolio chart image followed by comprehensive report with all generated file information and markdown performance summary
+            list: [ImageContent, str] - Portfolio chart followed by detailed report
 
         CSV Output Files:
 
-        1. **Equity Curves CSV** (`portfolio_performance_equity_*.csv`):
+        1. **Trades Table** (`portfolio_trades_*.csv`):
+            - timestamp (datetime): Trade execution time
+            - symbol (string): Trading pair (BTCUSDT, ETHUSDT)
+            - side (string): BUY or SELL
+            - qty (float): Quantity traded
+            - quote_qty (float): USDT value of trade
+            - price (float): Execution price
+            - commission (float): Trading fee
+            - commission_asset (string): Fee asset
+            - btc_price (float): BTC market price at trade time
+            - eth_price (float): ETH market price at trade time
+
+        2. **Equity Curves** (`portfolio_equity_*.csv`):
             - date (datetime): Date
             - actual (float): Actual portfolio value in USDT
-            - hypothetical (float): Hypothetical buy-and-hold portfolio value in USDT
+            - benchmark (float): Benchmark portfolio value in USDT
 
-        2. **Cash Flow Events CSV** (`portfolio_performance_events_*.csv`):
-            - timestamp (datetime): Event timestamp
-            - timestamp_ms (int): Event timestamp in milliseconds
-            - type (string): Event type (P2P_BUY, P2P_SELL, DEPOSIT)
-            - asset (string): Asset symbol (BTC, ETH, USDT)
-            - usd_value (float): USD value of the event (positive for inflows, negative for outflows)
-            - crypto_amount (float): Cryptocurrency amount
-            - description (string): Human-readable description
-            - cumulative_invested (float): Cumulative capital invested up to this event
-
-        3. **Performance Metrics CSV** (`portfolio_performance_metrics_*.csv`):
+        3. **Metrics** (`portfolio_metrics_*.csv`):
             - metric (string): Metric name
             - value (float): Metric value
 
-        4. **Visualization PNG** (`portfolio_performance_chart_*.png`):
-            - Chart comparing actual vs hypothetical portfolio equity curves
-            - Includes performance metrics overlay
-            - Accessible via web URL (temp PNG folder will be published on web)
-
-        Performance Report:
-            The tool returns a markdown-formatted report including:
-            - Capital invested summary (P2P deposits, withdrawals, crypto deposits)
-            - Performance metrics for both actual and hypothetical portfolios
-            - Return percentages and profit/loss
-            - Maximum drawdown analysis
-            - Outperformance analysis (actual vs hypothetical)
-            - Recent cash flow events timeline
-
-        Use Cases:
-            - Evaluate trading strategy performance vs passive holding
-            - Analyze portfolio returns over time
-            - Compare active trading results against buy-and-hold
-            - Identify outperformance or underperformance
-            - Review cash flow events and their impact on portfolio
-            - Track maximum drawdowns and risk metrics
-
         Example usage:
             binance_portfolio_performance(days=30)
-            binance_portfolio_performance(days=60)
-            binance_portfolio_performance(days=90)
+            binance_portfolio_performance(days=7)
 
         Note:
-            - Requires historical data access (P2P, deposits, trades)
-            - Analysis is limited to BTC, ETH, and USDT
-            - Hypothetical portfolio uses 33/33/33 equal-weight allocation
-            - All values are calculated in USDT
-            - PNG chart files are saved to the same directory as CSV files for web publishing
+            - Analysis limited to BTC, ETH, USDT spot trading
+            - Initial capital fixed at $3,000 for consistent comparison
+            - Benchmark rebalances on each trade date to maintain target weights
         """
         logger.info(f"binance_portfolio_performance tool invoked with days={days}")
 
@@ -911,13 +865,13 @@ def register_binance_portfolio_performance(local_mcp_instance, local_binance_cli
             # Build comprehensive response
             response_parts = []
 
-            # Add equity curves CSV info
-            response_parts.append("## Portfolio Equity Curves\n")
-            response_parts.append(format_csv_response(result['equity_csv_path'], result['merged_df']))
+            # Add trades table CSV info
+            response_parts.append("## Trades Table\n")
+            response_parts.append(format_csv_response(result['trades_csv_path'], result['trades_df']))
 
-            # Add cash flow events CSV info
-            response_parts.append("\n\n## Cash Flow Events\n")
-            response_parts.append(format_csv_response(result['events_csv_path'], result['events_df']))
+            # Add equity curves CSV info
+            response_parts.append("\n\n## Portfolio Equity Curves\n")
+            response_parts.append(format_csv_response(result['equity_csv_path'], result['merged_df']))
 
             # Add metrics CSV info
             metrics_df = pd.read_csv(result['metrics_csv_path'])
@@ -934,7 +888,7 @@ def register_binance_portfolio_performance(local_mcp_instance, local_binance_cli
                 png_size_str = f"{png_size_bytes / (1024 * 1024):.1f} MB"
 
             response_parts.append(f"\n\n## Visualization Chart\n")
-            response_parts.append(f"✓ Chart saved to PNG\n\n")
+            response_parts.append(f"Chart saved to PNG\n\n")
             response_parts.append(f"File: {result['png_path'].name}\n")
             response_parts.append(f"Size: {png_size_str}\n")
 
