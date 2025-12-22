@@ -160,6 +160,8 @@ transport_security = TransportSecuritySettings(
     allowed_hosts=[
         "localhost:*",
         "127.0.0.1:*",
+        "mcp-binance-local:*",  # Docker internal hostname (local compose)
+        "mcp-binance:*",  # Docker service name
         "scriptlab.duckdns.org:*",
         "scriptlab.duckdns.org",
     ],
@@ -167,6 +169,8 @@ transport_security = TransportSecuritySettings(
         "http://localhost:*",
         "https://localhost:*",
         "http://127.0.0.1:*",
+        "http://mcp-binance-local:*",  # Docker internal
+        "http://mcp-binance:*",  # Docker service name
         "https://scriptlab.duckdns.org:*",
         "https://scriptlab.duckdns.org",
     ],
