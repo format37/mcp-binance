@@ -15,6 +15,7 @@ from starlette.routing import Route
 from starlette.routing import Mount
 from starlette.staticfiles import StaticFiles
 from mcp.server.fastmcp import FastMCP
+from mcp.server.transport_security import TransportSecuritySettings
 from binance.client import Client
 from mcp_service import register_py_eval, register_tool_notes
 from mcp_resources import register_mcp_resources
@@ -153,7 +154,25 @@ if BINANCE_API_KEY and BINANCE_API_SECRET:
 else:
     logger.warning("BINANCE_API_KEY or BINANCE_API_SECRET not provided")
 
-mcp = FastMCP(_safe_name, streamable_http_path=STREAM_PATH, json_response=True)
+# Configure transport security to allow reverse proxy hosts
+transport_security = TransportSecuritySettings(
+    enable_dns_rebinding_protection=True,
+    allowed_hosts=[
+        "localhost:*",
+        "127.0.0.1:*",
+        "scriptlab.duckdns.org:*",
+        "scriptlab.duckdns.org",
+    ],
+    allowed_origins=[
+        "http://localhost:*",
+        "https://localhost:*",
+        "http://127.0.0.1:*",
+        "https://scriptlab.duckdns.org:*",
+        "https://scriptlab.duckdns.org",
+    ],
+)
+
+mcp = FastMCP(_safe_name, streamable_http_path=STREAM_PATH, json_response=True, transport_security=transport_security)
 
 # CSV storage directory (hardcoded for simplicity)
 CSV_DIR = pathlib.Path("data/mcp-binance")
