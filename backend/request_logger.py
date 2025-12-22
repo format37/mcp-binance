@@ -41,7 +41,7 @@ def log_request(
     safe_requester = "".join(c if c.isalnum() or c in "-_" else "_" for c in requester)
 
     # Build filename
-    filename = f"{datetime_ms}-{safe_requester}.json"
+    filename = f"{datetime_ms}-{tool_name}-{safe_requester}.json"
     filepath = requests_dir / filename
 
     # Build log record
