@@ -2,6 +2,7 @@ import logging
 from datetime import datetime
 import uuid
 from mcp_service import format_csv_response
+from request_logger import log_request
 import pandas as pd
 from binance.client import Client
 from typing import Optional
@@ -72,10 +73,10 @@ def fetch_futures_open_orders(binance_client: Client, symbol: Optional[str] = No
         raise
 
 
-def register_binance_get_futures_open_orders(local_mcp_instance, local_binance_client, csv_dir):
+def register_binance_get_futures_open_orders(local_mcp_instance, local_binance_client, csv_dir, requests_dir):
     """Register the binance_get_futures_open_orders tool"""
     @local_mcp_instance.tool()
-    def binance_get_futures_open_orders(symbol: Optional[str] = None) -> str:
+    def binance_get_futures_open_orders(requester: str, symbol: Optional[str] = None) -> str:
         """
         Fetch all open futures orders and save to CSV for analysis.
 
@@ -85,6 +86,7 @@ def register_binance_get_futures_open_orders(local_mcp_instance, local_binance_c
         ✓ READ-ONLY OPERATION - Safe to run anytime
 
         Parameters:
+            requester (string, required): Identifier of the user/system making the request
             symbol (string, optional): Trading pair symbol (e.g., 'BTCUSDT')
                 - If provided: Shows only open orders for this symbol
                 - If omitted: Shows all open futures orders across all symbols
@@ -182,7 +184,7 @@ def register_binance_get_futures_open_orders(local_mcp_instance, local_binance_c
             - No API rate limit concerns for reasonable usage
             - CSV file saved for record keeping and analysis
         """
-        logger.info(f"binance_get_futures_open_orders tool invoked")
+        logger.info(f"binance_get_futures_open_orders tool invoked by {requester}")
 
         try:
             # Fetch open orders
@@ -263,6 +265,14 @@ To cancel all orders for a symbol:
 
 ═══════════════════════════════════════════════════════════════════════════════
 """
+
+            log_request(
+                requests_dir=requests_dir,
+                requester=requester,
+                tool_name="binance_get_futures_open_orders",
+                input_params={"symbol": symbol},
+                output_result=result + summary
+            )
 
             return result + summary
 

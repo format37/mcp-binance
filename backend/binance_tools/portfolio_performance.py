@@ -24,6 +24,7 @@ import matplotlib.pyplot as plt
 from binance.client import Client
 from typing import Optional, Dict, Tuple, Any, List
 from mcp_service import format_csv_response
+from request_logger import log_request
 from sentry_utils import with_sentry_tracing
 from mcp.server.fastmcp import Image as MCPImage
 from PIL import Image as PILImage
@@ -791,11 +792,11 @@ def fetch_portfolio_performance(binance_client: Client, csv_dir: Path, days: int
 # MCP TOOL REGISTRATION
 # ============================================================================
 
-def register_binance_portfolio_performance(local_mcp_instance, local_binance_client, csv_dir):
+def register_binance_portfolio_performance(local_mcp_instance, local_binance_client, csv_dir, requests_dir):
     """Register the binance_portfolio_performance tool"""
 
     @local_mcp_instance.tool()
-    def binance_portfolio_performance(days: int = 30) -> list[Any]:
+    def binance_portfolio_performance(requester: str, days: int = 30) -> list[Any]:
         """
         Generate a comprehensive portfolio performance report comparing your actual trading
         results against a benchmark buy-and-hold strategy (33% BTC, 33% ETH, 34% USDT).
@@ -815,6 +816,7 @@ def register_binance_portfolio_performance(local_mcp_instance, local_binance_cli
         5. **Markdown Report** - Comprehensive performance summary
 
         Parameters:
+            requester (str): Name/ID of the requester for logging purposes
             days (int): Number of days to analyze (default: 30)
 
         Returns:
@@ -852,7 +854,7 @@ def register_binance_portfolio_performance(local_mcp_instance, local_binance_cli
             - Initial capital fixed at $3,000 for consistent comparison
             - Benchmark rebalances on each trade date to maintain target weights
         """
-        logger.info(f"binance_portfolio_performance tool invoked with days={days}")
+        logger.info(f"binance_portfolio_performance tool invoked by {requester} with days={days}")
 
         try:
             # Call the main fetch function
@@ -939,6 +941,15 @@ def register_binance_portfolio_performance(local_mcp_instance, local_binance_cli
                 image_content = mcp_image.to_image_content()
 
             logger.info(f"binance_portfolio_performance completed successfully")
+
+            # Log the request
+            log_request(
+                requests_dir=requests_dir,
+                requester=requester,
+                tool_name="binance_portfolio_performance",
+                input_params={"days": days},
+                output_result=[image_content, final_response]
+            )
 
             # Return list with image first, then text report
             return [image_content, final_response]

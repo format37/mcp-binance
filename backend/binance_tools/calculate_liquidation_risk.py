@@ -3,6 +3,7 @@ from datetime import datetime
 from decimal import Decimal
 import uuid
 from mcp_service import format_csv_response
+from request_logger import log_request
 import pandas as pd
 from binance.client import Client
 from typing import Optional
@@ -184,10 +185,10 @@ def calculate_liquidation_risk(binance_client: Client, symbol: Optional[str] = N
         raise
 
 
-def register_binance_calculate_liquidation_risk(local_mcp_instance, local_binance_client, csv_dir):
+def register_binance_calculate_liquidation_risk(local_mcp_instance, local_binance_client, csv_dir, requests_dir):
     """Register the binance_calculate_liquidation_risk tool"""
     @local_mcp_instance.tool()
-    def binance_calculate_liquidation_risk(symbol: Optional[str] = None) -> str:
+    def binance_calculate_liquidation_risk(requester: str, symbol: Optional[str] = None) -> str:
         """
         Calculate liquidation risk for futures positions and save detailed analysis to CSV.
 
@@ -198,6 +199,7 @@ def register_binance_calculate_liquidation_risk(local_mcp_instance, local_binanc
         ✓ READ-ONLY OPERATION - Safe to run anytime
 
         Parameters:
+            requester (string): The entity requesting this operation (e.g., 'user', 'claude', 'system')
             symbol (string, optional): Trading pair symbol (e.g., 'BTCUSDT')
                 - If provided: Analyzes only this symbol
                 - If omitted: Analyzes all open positions (recommended)
@@ -349,7 +351,7 @@ def register_binance_calculate_liquidation_risk(local_mcp_instance, local_binanc
             - Use with binance_get_futures_balances to check available margin
             - Combine with price alerts for comprehensive risk management
         """
-        logger.info(f"binance_calculate_liquidation_risk tool invoked")
+        logger.info(f"binance_calculate_liquidation_risk tool invoked by {requester}")
 
         try:
             # Calculate risk
@@ -451,6 +453,15 @@ Risk Breakdown:
                 result += "   Continue monitoring positions regularly.\n\n"
 
             result += "═══════════════════════════════════════════════════════════════════════════════\n"
+
+            # Log request
+            log_request(
+                requests_dir=requests_dir,
+                requester=requester,
+                tool_name="binance_calculate_liquidation_risk",
+                input_params={"symbol": symbol},
+                output_result=result
+            )
 
             return result
 

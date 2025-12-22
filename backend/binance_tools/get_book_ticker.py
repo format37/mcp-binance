@@ -2,6 +2,7 @@ import logging
 from decimal import Decimal
 import uuid
 from mcp_service import format_csv_response
+from request_logger import log_request
 import pandas as pd
 from binance.client import Client
 from sentry_utils import with_sentry_tracing
@@ -80,10 +81,10 @@ def fetch_book_ticker(binance_client: Client, symbol: str = 'BTCUSDT') -> pd.Dat
     return df
 
 
-def register_binance_get_book_ticker(local_mcp_instance, local_binance_client, csv_dir):
+def register_binance_get_book_ticker(local_mcp_instance, local_binance_client, csv_dir, requests_dir):
     """Register the binance_get_book_ticker tool"""
     @local_mcp_instance.tool()
-    def binance_get_book_ticker(symbol: str = 'BTCUSDT') -> str:
+    def binance_get_book_ticker(requester: str, symbol: str = 'BTCUSDT') -> str:
         """
         Fetch best bid and ask prices with quantities and save to CSV file for analysis.
 
@@ -92,6 +93,8 @@ def register_binance_get_book_ticker(local_mcp_instance, local_binance_client, c
         only need the top-of-book data for spread monitoring and quick market sentiment analysis.
 
         Parameters:
+            requester (str): Identifier of who is calling this tool (e.g., 'trading-agent', 'user-alex').
+                Used for request logging and audit purposes.
             symbol (str): Trading pair symbol (default: 'BTCUSDT')
                 Examples: 'BTCUSDT', 'ETHUSDT', 'BNBUSDT', 'ADAUSDT', 'SOLUSDT'
 
@@ -167,7 +170,7 @@ def register_binance_get_book_ticker(local_mcp_instance, local_binance_client, c
             with multiple price levels, use binance_get_orderbook.
             Data is READ-ONLY and does not execute any trades.
         """
-        logger.info(f"binance_get_book_ticker tool invoked for symbol: {symbol}")
+        logger.info(f"binance_get_book_ticker tool invoked by {requester} for symbol: {symbol}")
 
         # Call fetch_book_ticker function
         df = fetch_book_ticker(binance_client=local_binance_client, symbol=symbol)
@@ -181,4 +184,15 @@ def register_binance_get_book_ticker(local_mcp_instance, local_binance_client, c
         logger.info(f"Saved book ticker data to {filename} for {symbol}")
 
         # Return formatted response
-        return format_csv_response(filepath, df)
+        result = format_csv_response(filepath, df)
+
+        # Log the request for audit trail
+        log_request(
+            requests_dir=requests_dir,
+            requester=requester,
+            tool_name="binance_get_book_ticker",
+            input_params={"symbol": symbol},
+            output_result=result
+        )
+
+        return result

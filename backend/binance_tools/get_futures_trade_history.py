@@ -2,6 +2,7 @@ import logging
 from datetime import datetime
 import uuid
 from mcp_service import format_csv_response
+from request_logger import log_request
 import pandas as pd
 from binance.client import Client
 from typing import Optional
@@ -76,10 +77,10 @@ def fetch_futures_trade_history(binance_client: Client, symbol: str, limit: int 
         raise
 
 
-def register_binance_get_futures_trade_history(local_mcp_instance, local_binance_client, csv_dir):
+def register_binance_get_futures_trade_history(local_mcp_instance, local_binance_client, csv_dir, requests_dir):
     """Register the binance_get_futures_trade_history tool"""
     @local_mcp_instance.tool()
-    def binance_get_futures_trade_history(symbol: str, limit: int = 100, from_id: Optional[int] = None) -> str:
+    def binance_get_futures_trade_history(requester: str, symbol: str, limit: int = 100, from_id: Optional[int] = None) -> str:
         """
         Fetch historical futures trades (executions) for a symbol and save to CSV for analysis.
 
@@ -90,6 +91,7 @@ def register_binance_get_futures_trade_history(local_mcp_instance, local_binance
         ✓ READ-ONLY OPERATION - Safe to run anytime
 
         Parameters:
+            requester (string, required): Name of the requester making this call (for request logging)
             symbol (string, required): Trading pair symbol (e.g., 'BTCUSDT', 'ETHUSDT')
             limit (integer, optional): Number of trades to retrieve (default: 100, max: 1000)
             from_id (integer, optional): Trade ID to fetch from (for pagination)
@@ -225,7 +227,7 @@ def register_binance_get_futures_trade_history(local_mcp_instance, local_binance
             - CSV file saved for record keeping and analysis
             - Different from spot trade history (uses futures API)
         """
-        logger.info(f"binance_get_futures_trade_history tool invoked for {symbol}")
+        logger.info(f"binance_get_futures_trade_history tool invoked for {symbol} by {requester}")
 
         # Validate parameters
         if not symbol:
@@ -253,6 +255,19 @@ def register_binance_get_futures_trade_history(local_mcp_instance, local_binance
 
             # Return formatted response
             result = format_csv_response(filepath, df)
+
+            # Log request
+            log_request(
+                requests_dir=requests_dir,
+                requester=requester,
+                tool_name="binance_get_futures_trade_history",
+                input_params={
+                    "symbol": symbol,
+                    "limit": limit,
+                    "from_id": from_id
+                },
+                output_result=result
+            )
 
             if df.empty:
                 summary = f"""

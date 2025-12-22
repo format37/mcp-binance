@@ -3,6 +3,7 @@ from datetime import datetime
 from decimal import Decimal
 import uuid
 from mcp_service import format_csv_response
+from request_logger import log_request
 import pandas as pd
 from binance.client import Client
 from typing import Optional
@@ -116,16 +117,20 @@ def fetch_account(binance_client: Client) -> pd.DataFrame:
     return df
 
 
-def register_binance_get_account(local_mcp_instance, local_binance_client, csv_dir):
+def register_binance_get_account(local_mcp_instance, local_binance_client, csv_dir, requests_dir):
     """Register the binance_get_account tool"""
     @local_mcp_instance.tool()
-    def binance_get_account() -> str:
+    def binance_get_account(requester: str) -> str:
         """
         Fetch Binance account portfolio information with current prices and save to CSV file for analysis.
 
         This tool retrieves your current Binance account balances including all assets
         with non-zero amounts (available + locked), along with current USDT prices and
         total values. The data is saved to a CSV file for detailed analysis using the py_eval tool.
+
+        Parameters:
+            requester (str): Identifier of who is calling this tool (e.g., 'trading-agent', 'user-alex').
+                Used for request logging and audit purposes.
 
         Returns:
             str: Formatted response with CSV file info, schema, sample data, and Python snippet to load the file.
@@ -165,7 +170,7 @@ def register_binance_get_account(local_mcp_instance, local_binance_client, csv_d
             Results are sorted by USDT value in descending order, showing your
             most valuable holdings first. Assets without USDT pricing appear at the end.
         """
-        logger.info("binance_get_account tool invoked")
+        logger.info(f"binance_get_account tool invoked by {requester}")
 
         # Call fetch_account function
         df = fetch_account(binance_client=local_binance_client)
@@ -182,4 +187,15 @@ def register_binance_get_account(local_mcp_instance, local_binance_client, csv_d
         logger.info(f"Saved account data to {filename} ({len(df)} assets)")
 
         # Return formatted response
-        return format_csv_response(filepath, df)
+        result = format_csv_response(filepath, df)
+
+        # Log the request for audit trail
+        log_request(
+            requests_dir=requests_dir,
+            requester=requester,
+            tool_name="binance_get_account",
+            input_params={},
+            output_result=result
+        )
+
+        return result

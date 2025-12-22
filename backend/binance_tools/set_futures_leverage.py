@@ -3,6 +3,7 @@ from datetime import datetime
 from decimal import Decimal
 import uuid
 from mcp_service import format_csv_response
+from request_logger import log_request
 import pandas as pd
 from binance.client import Client
 from typing import Optional
@@ -199,10 +200,10 @@ def get_leverage_info(binance_client: Client, symbol: str) -> pd.DataFrame:
         raise
 
 
-def register_binance_set_futures_leverage(local_mcp_instance, local_binance_client, csv_dir):
+def register_binance_set_futures_leverage(local_mcp_instance, local_binance_client, csv_dir, requests_dir):
     """Register the binance_set_futures_leverage tool"""
     @local_mcp_instance.tool()
-    def binance_set_futures_leverage(symbol: str, leverage: Optional[int] = None,
+    def binance_set_futures_leverage(requester: str, symbol: str, leverage: Optional[int] = None,
                                      margin_type: Optional[str] = None,
                                      get_info: bool = False) -> str:
         """
@@ -213,6 +214,7 @@ def register_binance_set_futures_leverage(local_mcp_instance, local_binance_clie
         Start with LOW leverage (2x-5x) until experienced. 75x+ leverage is EXTREMELY risky.
 
         Parameters:
+            requester (string, required): Name of the requester making this call (for request logging)
             symbol (string, required): Trading pair symbol (e.g., 'BTCUSDT', 'ETHUSDT')
             leverage (integer, optional): Leverage multiplier to set (1-125)
             margin_type (string, optional): Margin type - 'CROSSED' or 'ISOLATED'
@@ -310,7 +312,7 @@ def register_binance_set_futures_leverage(local_mcp_instance, local_binance_clie
             - Lower leverage = More margin safety = Lower liquidation risk
             - This tool modifies REAL account settings
         """
-        logger.info(f"binance_set_futures_leverage tool invoked for {symbol}")
+        logger.info(f"binance_set_futures_leverage tool invoked for {symbol} by {requester}")
 
         if not symbol:
             return "Error: symbol is required (e.g., 'BTCUSDT')"
@@ -334,6 +336,20 @@ def register_binance_set_futures_leverage(local_mcp_instance, local_binance_clie
                 logger.info(f"Saved leverage info to {filename}")
 
                 result = format_csv_response(filepath, df)
+
+                # Log request
+                log_request(
+                    requests_dir=requests_dir,
+                    requester=requester,
+                    tool_name="binance_set_futures_leverage",
+                    input_params={
+                        "symbol": symbol,
+                        "leverage": leverage,
+                        "margin_type": margin_type,
+                        "get_info": get_info
+                    },
+                    output_result=result
+                )
 
                 info_data = df.iloc[0]
                 summary = f"""
@@ -396,7 +412,22 @@ Max Notional:        ${lev_data['maxNotionalValue']:,.0f}
                 df.to_csv(filepath, index=False)
                 logger.info(f"Saved margin type setting to {filename}")
 
-                results.append(format_csv_response(filepath, df))
+                margin_result = format_csv_response(filepath, df)
+                results.append(margin_result)
+
+                # Log request
+                log_request(
+                    requests_dir=requests_dir,
+                    requester=requester,
+                    tool_name="binance_set_futures_leverage",
+                    input_params={
+                        "symbol": symbol,
+                        "leverage": leverage,
+                        "margin_type": margin_type,
+                        "get_info": get_info
+                    },
+                    output_result=margin_result
+                )
 
                 margin_data = df.iloc[0]
                 results.append(f"""

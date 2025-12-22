@@ -2,6 +2,7 @@ import logging
 from decimal import Decimal
 import uuid
 from mcp_service import format_csv_response
+from request_logger import log_request
 import pandas as pd
 from binance.client import Client
 from sentry_utils import with_sentry_tracing
@@ -54,10 +55,10 @@ def fetch_avg_price(binance_client: Client, symbol: str = 'BTCUSDT') -> pd.DataF
     return df
 
 
-def register_binance_get_avg_price(local_mcp_instance, local_binance_client, csv_dir):
+def register_binance_get_avg_price(local_mcp_instance, local_binance_client, csv_dir, requests_dir):
     """Register the binance_get_avg_price tool"""
     @local_mcp_instance.tool()
-    def binance_get_avg_price(symbol: str = 'BTCUSDT') -> str:
+    def binance_get_avg_price(requester: str, symbol: str = 'BTCUSDT') -> str:
         """
         Fetch volume-weighted average price for a trading symbol and save to CSV file for analysis.
 
@@ -66,6 +67,8 @@ def register_binance_get_avg_price(local_mcp_instance, local_binance_client, csv
         making trading decisions based on a more stable price reference rather than spot price.
 
         Parameters:
+            requester (str): Identifier of who is calling this tool (e.g., 'trading-agent', 'user-alex').
+                Used for request logging and audit purposes.
             symbol (str): Trading pair symbol (default: 'BTCUSDT')
                 Examples: 'BTCUSDT', 'ETHUSDT', 'BNBUSDT', 'ADAUSDT', 'SOLUSDT'
 
@@ -141,7 +144,7 @@ def register_binance_get_avg_price(local_mcp_instance, local_binance_client, csv
             may vary. Check the time_window_mins field for the actual period.
             Data is READ-ONLY and does not execute any trades.
         """
-        logger.info(f"binance_get_avg_price tool invoked for symbol: {symbol}")
+        logger.info(f"binance_get_avg_price tool invoked by {requester} for symbol: {symbol}")
 
         # Call fetch_avg_price function
         df = fetch_avg_price(binance_client=local_binance_client, symbol=symbol)
@@ -155,4 +158,15 @@ def register_binance_get_avg_price(local_mcp_instance, local_binance_client, csv
         logger.info(f"Saved average price data to {filename} for {symbol}")
 
         # Return formatted response
-        return format_csv_response(filepath, df)
+        result = format_csv_response(filepath, df)
+
+        # Log the request for audit trail
+        log_request(
+            requests_dir=requests_dir,
+            requester=requester,
+            tool_name="binance_get_avg_price",
+            input_params={"symbol": symbol},
+            output_result=result
+        )
+
+        return result

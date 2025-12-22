@@ -2,6 +2,7 @@ import logging
 from datetime import datetime
 import uuid
 from mcp_service import format_csv_response
+from request_logger import log_request
 import pandas as pd
 from binance.client import Client
 from typing import Optional
@@ -86,10 +87,10 @@ def cancel_futures_order_operation(binance_client: Client, symbol: str, order_id
         raise
 
 
-def register_binance_cancel_futures_order(local_mcp_instance, local_binance_client, csv_dir):
+def register_binance_cancel_futures_order(local_mcp_instance, local_binance_client, csv_dir, requests_dir):
     """Register the binance_cancel_futures_order tool"""
     @local_mcp_instance.tool()
-    def binance_cancel_futures_order(symbol: str, order_id: Optional[int] = None, cancel_all: bool = False) -> str:
+    def binance_cancel_futures_order(requester: str, symbol: str, order_id: Optional[int] = None, cancel_all: bool = False) -> str:
         """
         Cancel one or all futures orders for a trading pair and save cancellation details to CSV.
 
@@ -101,6 +102,7 @@ def register_binance_cancel_futures_order(local_mcp_instance, local_binance_clie
         Cancelled orders cannot be restored. Verify order_id before cancelling.
 
         Parameters:
+            requester (string, required): Name of the requester making this call (for request logging)
             symbol (string, required): Trading pair symbol (e.g., 'BTCUSDT', 'ETHUSDT')
             order_id (integer, optional): Specific order ID to cancel (get from binance_get_futures_open_orders)
             cancel_all (boolean, optional): If True, cancels ALL open futures orders for symbol (default: False)
@@ -218,7 +220,7 @@ def register_binance_cancel_futures_order(local_mcp_instance, local_binance_clie
             - Can cancel orders in NEW or PARTIALLY_FILLED status only
             - Filled orders cannot be cancelled (they're already executed)
         """
-        logger.info(f"binance_cancel_futures_order tool invoked for {symbol}")
+        logger.info(f"binance_cancel_futures_order tool invoked for {symbol} by {requester}")
 
         # Validate parameters
         if not symbol:
@@ -250,6 +252,19 @@ def register_binance_cancel_futures_order(local_mcp_instance, local_binance_clie
 
             # Return formatted response
             result = format_csv_response(filepath, df)
+
+            # Log request
+            log_request(
+                requests_dir=requests_dir,
+                requester=requester,
+                tool_name="binance_cancel_futures_order",
+                input_params={
+                    "symbol": symbol,
+                    "order_id": order_id,
+                    "cancel_all": cancel_all
+                },
+                output_result=result
+            )
 
             # Add cancellation summary
             cancel_data = df.iloc[0]

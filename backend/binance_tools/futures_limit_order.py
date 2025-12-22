@@ -3,6 +3,7 @@ from datetime import datetime
 from decimal import Decimal
 import uuid
 from mcp_service import format_csv_response
+from request_logger import log_request
 import pandas as pd
 from binance.client import Client
 from sentry_utils import with_sentry_tracing
@@ -115,10 +116,10 @@ def execute_futures_limit_order(binance_client: Client, symbol: str, side: str,
         raise
 
 
-def register_binance_futures_limit_order(local_mcp_instance, local_binance_client, csv_dir):
+def register_binance_futures_limit_order(local_mcp_instance, local_binance_client, csv_dir, requests_dir):
     """Register the binance_futures_limit_order tool"""
     @local_mcp_instance.tool()
-    def binance_futures_limit_order(symbol: str, side: str, quantity: float, price: float,
+    def binance_futures_limit_order(requester: str, symbol: str, side: str, quantity: float, price: float,
                                     position_side: str = 'BOTH', time_in_force: str = 'GTC',
                                     reduce_only: bool = False) -> str:
         """
@@ -129,6 +130,7 @@ def register_binance_futures_limit_order(local_mcp_instance, local_binance_clien
         Losses can EXCEED your initial investment. Monitor liquidation prices constantly!
 
         Parameters:
+            requester (string, required): Identifier of the user/system making the request
             symbol (string, required): Trading pair symbol (e.g., 'BTCUSDT', 'ETHUSDT')
             side (string, required): Order side - 'BUY' or 'SELL' (case-insensitive)
             quantity (float, required): Amount of contracts to trade
@@ -240,7 +242,7 @@ def register_binance_futures_limit_order(local_mcp_instance, local_binance_clien
             - Leverage affects margin requirements and liquidation risk
             - Check futures account balance before placing orders
         """
-        logger.info(f"binance_futures_limit_order tool invoked: {side} {quantity} {symbol} @ {price}")
+        logger.info(f"binance_futures_limit_order tool invoked: {side} {quantity} {symbol} @ {price} by {requester}")
 
         # Validate parameters
         if not symbol:
@@ -333,6 +335,22 @@ Remaining order is still active.
                 summary += "\nOrder Status: CANCELED\nOrder was not filled and has been canceled (IOC/FOK).\n"
 
             summary += "═══════════════════════════════════════════════════════════════════════════════\n"
+
+            log_request(
+                requests_dir=requests_dir,
+                requester=requester,
+                tool_name="binance_futures_limit_order",
+                input_params={
+                    "symbol": symbol,
+                    "side": side,
+                    "quantity": quantity,
+                    "price": price,
+                    "position_side": position_side,
+                    "time_in_force": time_in_force,
+                    "reduce_only": reduce_only
+                },
+                output_result=result + summary
+            )
 
             return result + summary
 

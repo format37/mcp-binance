@@ -3,6 +3,7 @@ from datetime import datetime
 from decimal import Decimal
 import uuid
 from mcp_service import format_csv_response
+from request_logger import log_request
 import pandas as pd
 from binance.client import Client
 from sentry_utils import with_sentry_tracing
@@ -97,10 +98,10 @@ def fetch_ticker(binance_client: Client, symbol: str = 'BTCUSDT') -> pd.DataFram
     return df
 
 
-def register_binance_get_ticker(local_mcp_instance, local_binance_client, csv_dir):
+def register_binance_get_ticker(local_mcp_instance, local_binance_client, csv_dir, requests_dir):
     """Register the binance_get_ticker tool"""
     @local_mcp_instance.tool()
-    def binance_get_ticker(symbol: str = 'BTCUSDT') -> str:
+    def binance_get_ticker(requester: str, symbol: str = 'BTCUSDT') -> str:
         """
         Fetch 24-hour ticker statistics for a trading symbol and save to CSV file for analysis.
 
@@ -109,6 +110,8 @@ def register_binance_get_ticker(local_mcp_instance, local_binance_client, csv_di
         overview and volatility analysis.
 
         Parameters:
+            requester (str): Identifier of who is calling this tool (e.g., 'trading-agent', 'user-alex').
+                Used for request logging and audit purposes.
             symbol (str): Trading pair symbol (default: 'BTCUSDT')
                 Examples: 'BTCUSDT', 'ETHUSDT', 'BNBUSDT', 'ADAUSDT', 'SOLUSDT'
 
@@ -168,7 +171,7 @@ def register_binance_get_ticker(local_mcp_instance, local_binance_client, csv_di
             Statistics cover a rolling 24-hour period ending at the current time.
             Data is READ-ONLY and does not execute any trades.
         """
-        logger.info(f"binance_get_ticker tool invoked for symbol: {symbol}")
+        logger.info(f"binance_get_ticker tool invoked by {requester} for symbol: {symbol}")
 
         # Call fetch_ticker function
         df = fetch_ticker(binance_client=local_binance_client, symbol=symbol)
@@ -182,4 +185,15 @@ def register_binance_get_ticker(local_mcp_instance, local_binance_client, csv_di
         logger.info(f"Saved ticker data to {filename} for {symbol}")
 
         # Return formatted response
-        return format_csv_response(filepath, df)
+        result = format_csv_response(filepath, df)
+
+        # Log the request for audit trail
+        log_request(
+            requests_dir=requests_dir,
+            requester=requester,
+            tool_name="binance_get_ticker",
+            input_params={"symbol": symbol},
+            output_result=result
+        )
+
+        return result

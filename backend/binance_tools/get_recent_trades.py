@@ -3,6 +3,7 @@ from datetime import datetime
 from decimal import Decimal
 import uuid
 from mcp_service import format_csv_response
+from request_logger import log_request
 import pandas as pd
 from binance.client import Client
 from sentry_utils import with_sentry_tracing
@@ -80,10 +81,10 @@ def fetch_recent_trades(binance_client: Client, symbol: str = 'BTCUSDT', limit: 
     return df
 
 
-def register_binance_get_recent_trades(local_mcp_instance, local_binance_client, csv_dir):
+def register_binance_get_recent_trades(local_mcp_instance, local_binance_client, csv_dir, requests_dir):
     """Register the binance_get_recent_trades tool"""
     @local_mcp_instance.tool()
-    def binance_get_recent_trades(symbol: str = 'BTCUSDT', limit: int = 100) -> str:
+    def binance_get_recent_trades(requester: str, symbol: str = 'BTCUSDT', limit: int = 100) -> str:
         """
         Fetch recent executed trades for a trading symbol and save to CSV file for analysis.
 
@@ -92,6 +93,8 @@ def register_binance_get_recent_trades(local_mcp_instance, local_binance_client,
         market activity, buy/sell pressure, and trade flow patterns.
 
         Parameters:
+            requester (str): Identifier of who is calling this tool (e.g., 'trading-agent', 'user-alex').
+                Used for request logging and audit purposes.
             symbol (str): Trading pair symbol (default: 'BTCUSDT')
                 Examples: 'BTCUSDT', 'ETHUSDT', 'BNBUSDT', 'ADAUSDT', 'SOLUSDT'
             limit (int): Number of recent trades to fetch (default: 100, max: 1000)
@@ -155,7 +158,7 @@ def register_binance_get_recent_trades(local_mcp_instance, local_binance_client,
             Data is READ-ONLY and does not execute any trades.
             Trade data represents actual executed transactions on the exchange.
         """
-        logger.info(f"binance_get_recent_trades tool invoked for symbol: {symbol}, limit: {limit}")
+        logger.info(f"binance_get_recent_trades tool invoked by {requester} for symbol: {symbol}, limit: {limit}")
 
         # Validate and cap limit
         if limit > 1000:
@@ -180,4 +183,15 @@ def register_binance_get_recent_trades(local_mcp_instance, local_binance_client,
         logger.info(f"Saved trade data to {filename} for {symbol} ({len(df)} trades)")
 
         # Return formatted response
-        return format_csv_response(filepath, df)
+        result = format_csv_response(filepath, df)
+
+        # Log the request for audit trail
+        log_request(
+            requests_dir=requests_dir,
+            requester=requester,
+            tool_name="binance_get_recent_trades",
+            input_params={"symbol": symbol, "limit": limit},
+            output_result=result
+        )
+
+        return result

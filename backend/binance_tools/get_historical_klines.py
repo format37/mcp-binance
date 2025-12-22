@@ -2,6 +2,7 @@ import logging
 from datetime import datetime, timedelta
 import uuid
 from mcp_service import format_csv_response
+from request_logger import log_request
 import pandas as pd
 from binance.client import Client
 from sentry_utils import with_sentry_tracing
@@ -94,10 +95,11 @@ def fetch_historical_klines(
     return df
 
 
-def register_binance_get_historical_klines(local_mcp_instance, local_binance_client, csv_dir):
+def register_binance_get_historical_klines(local_mcp_instance, local_binance_client, csv_dir, requests_dir):
     """Register the binance_get_historical_klines tool"""
     @local_mcp_instance.tool()
     def binance_get_historical_klines(
+        requester: str,
         symbol: str = 'BTCUSDT',
         interval: str = '1h',
         days: int = 30
@@ -110,6 +112,9 @@ def register_binance_get_historical_klines(local_mcp_instance, local_binance_cli
         at specific timestamps.
 
         Parameters:
+            requester (str): Identifier of who is calling this tool (e.g., 'trading-agent', 'user-alex').
+                Used for request logging and audit purposes.
+
             symbol (str): Trading pair symbol (default: 'BTCUSDT')
                 Examples: 'BTCUSDT', 'ETHUSDT', 'BNBUSDT', 'ADAUSDT', 'SOLUSDT'
 
@@ -205,7 +210,7 @@ def register_binance_get_historical_klines(local_mcp_instance, local_binance_cli
             - Use longer intervals (1h, 1d) for extended historical analysis
             - For exact timestamp matching, use 1-minute or 5-minute intervals
         """
-        logger.info(f"binance_get_historical_klines tool invoked for {symbol}, interval={interval}, days={days}")
+        logger.info(f"binance_get_historical_klines tool invoked by {requester} for {symbol}, interval={interval}, days={days}")
 
         # Call fetch_historical_klines function
         df = fetch_historical_klines(
@@ -224,4 +229,15 @@ def register_binance_get_historical_klines(local_mcp_instance, local_binance_cli
         logger.info(f"Saved historical klines data to {filename} for {symbol}")
 
         # Return formatted response
-        return format_csv_response(filepath, df)
+        result = format_csv_response(filepath, df)
+
+        # Log the request for audit trail
+        log_request(
+            requests_dir=requests_dir,
+            requester=requester,
+            tool_name="binance_get_historical_klines",
+            input_params={"symbol": symbol, "interval": interval, "days": days},
+            output_result=result
+        )
+
+        return result

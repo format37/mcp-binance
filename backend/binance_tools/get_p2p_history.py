@@ -3,6 +3,7 @@ from datetime import datetime
 from decimal import Decimal
 import uuid
 from mcp_service import format_csv_response
+from request_logger import log_request
 import pandas as pd
 from binance.client import Client
 from typing import Optional
@@ -136,10 +137,11 @@ def fetch_p2p_history(
         raise
 
 
-def register_binance_get_p2p_history(local_mcp_instance, local_binance_client, csv_dir):
+def register_binance_get_p2p_history(local_mcp_instance, local_binance_client, csv_dir, requests_dir):
     """Register the binance_get_p2p_history tool"""
     @local_mcp_instance.tool()
     def binance_get_p2p_history(
+        requester: str,
         trade_type: str,
         start_time: Optional[int] = None,
         end_time: Optional[int] = None,
@@ -154,6 +156,9 @@ def register_binance_get_p2p_history(local_mcp_instance, local_binance_client, c
         Results are saved to CSV for detailed analysis of P2P trading activity.
 
         Parameters:
+            requester (str): Identifier of who is calling this tool (e.g., 'trading-agent', 'user-alex').
+                Used for request logging and audit purposes.
+
             trade_type (str, REQUIRED): Type of P2P trade to retrieve:
                                        - "BUY": When you bought crypto with fiat
                                        - "SELL": When you sold crypto for fiat
@@ -277,7 +282,7 @@ def register_binance_get_p2p_history(local_mcp_instance, local_binance_client, c
             transactions with other users using fiat currency, while spot trading
             involves trading on the exchange order book with crypto pairs.
         """
-        logger.info(f"binance_get_p2p_history tool invoked - trade_type: {trade_type}, page: {page}")
+        logger.info(f"binance_get_p2p_history tool invoked by {requester} - trade_type: {trade_type}, page: {page}")
 
         # Validate trade_type
         if trade_type not in ['BUY', 'SELL']:
@@ -305,4 +310,15 @@ def register_binance_get_p2p_history(local_mcp_instance, local_binance_client, c
         logger.info(f"Saved P2P history to {filename} ({len(df)} records)")
 
         # Return formatted response
-        return format_csv_response(filepath, df)
+        result = format_csv_response(filepath, df)
+
+        # Log the request for audit trail
+        log_request(
+            requests_dir=requests_dir,
+            requester=requester,
+            tool_name="binance_get_p2p_history",
+            input_params={"trade_type": trade_type, "start_time": start_time, "end_time": end_time, "page": page, "rows": rows},
+            output_result=result
+        )
+
+        return result

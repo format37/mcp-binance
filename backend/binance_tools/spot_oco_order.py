@@ -3,6 +3,7 @@ from datetime import datetime
 from decimal import Decimal
 import uuid
 from mcp_service import format_csv_response
+from request_logger import log_request
 import pandas as pd
 from binance.client import Client
 from typing import Optional
@@ -163,10 +164,10 @@ def execute_oco_order(binance_client: Client, symbol: str, side: str, quantity: 
         raise
 
 
-def register_binance_spot_oco_order(local_mcp_instance, local_binance_client, csv_dir):
+def register_binance_spot_oco_order(local_mcp_instance, local_binance_client, csv_dir, requests_dir):
     """Register the binance_spot_oco_order tool"""
     @local_mcp_instance.tool()
-    def binance_spot_oco_order(symbol: str, side: str, quantity: float, take_profit_price: float,
+    def binance_spot_oco_order(requester: str, symbol: str, side: str, quantity: float, take_profit_price: float,
                                stop_loss_price: float, stop_limit_price: float = None,
                                time_in_force: str = "GTC") -> str:
         """
@@ -181,6 +182,7 @@ def register_binance_spot_oco_order(local_mcp_instance, local_binance_client, cs
         before execution.
 
         Parameters:
+            requester (string, required): Name or identifier of the user making the request
             symbol (string, required): Trading pair symbol (e.g., 'BTCUSDT', 'ETHUSDT')
             side (string, required): Order side - 'BUY' or 'SELL' (case-insensitive)
                 Typically 'SELL' for exiting long positions with risk management
@@ -298,7 +300,7 @@ def register_binance_spot_oco_order(local_mcp_instance, local_binance_client, cs
             - If one order partially fills, the OCO relationship is maintained
             - Consider using stop_limit_price to improve stop-loss fill probability
         """
-        logger.info(f"binance_spot_oco_order tool invoked: {side} {quantity} {symbol}")
+        logger.info(f"binance_spot_oco_order tool invoked by {requester}: {side} {quantity} {symbol}")
 
         # Validate parameters
         if not symbol:
@@ -330,6 +332,23 @@ def register_binance_spot_oco_order(local_mcp_instance, local_binance_client, cs
 
             # Return formatted response
             result = format_csv_response(filepath, df)
+
+            # Log request
+            log_request(
+                requests_dir=requests_dir,
+                requester=requester,
+                tool_name="binance_spot_oco_order",
+                input_params={
+                    "symbol": symbol,
+                    "side": side,
+                    "quantity": quantity,
+                    "take_profit_price": take_profit_price,
+                    "stop_loss_price": stop_loss_price,
+                    "stop_limit_price": stop_limit_price,
+                    "time_in_force": time_in_force
+                },
+                output_result=result
+            )
 
             # Add execution summary to response
             order_data = df.iloc[0]

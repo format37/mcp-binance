@@ -3,6 +3,7 @@ from datetime import datetime
 from decimal import Decimal
 import uuid
 from mcp_service import format_csv_response
+from request_logger import log_request
 import pandas as pd
 from binance.client import Client
 from typing import Optional
@@ -150,10 +151,11 @@ def fetch_withdrawal_history(
         raise
 
 
-def register_binance_get_withdrawal_history(local_mcp_instance, local_binance_client, csv_dir):
+def register_binance_get_withdrawal_history(local_mcp_instance, local_binance_client, csv_dir, requests_dir):
     """Register the binance_get_withdrawal_history tool"""
     @local_mcp_instance.tool()
     def binance_get_withdrawal_history(
+        requester: str,
         coin: Optional[str] = None,
         status: Optional[int] = None,
         start_time: Optional[int] = None,
@@ -168,6 +170,9 @@ def register_binance_get_withdrawal_history(local_mcp_instance, local_binance_cl
         detailed analysis of outflows from your account.
 
         Parameters:
+            requester (str): Identifier of who is calling this tool (e.g., 'trading-agent', 'user-alex').
+                Used for request logging and audit purposes.
+
             coin (str, optional): Filter by specific cryptocurrency (e.g., 'BTC', 'USDT', 'ETH', 'BNB').
                                   If not provided, returns withdrawals for all coins.
 
@@ -276,7 +281,7 @@ def register_binance_get_withdrawal_history(local_mcp_instance, local_binance_cl
         Note:
             For fiat withdrawals (EUR, USD, etc.), use a separate fiat withdrawal history endpoint.
         """
-        logger.info(f"binance_get_withdrawal_history tool invoked - coin: {coin}, status: {status}")
+        logger.info(f"binance_get_withdrawal_history tool invoked by {requester} - coin: {coin}, status: {status}")
 
         # Call fetch function
         df = fetch_withdrawal_history(
@@ -301,4 +306,15 @@ def register_binance_get_withdrawal_history(local_mcp_instance, local_binance_cl
         logger.info(f"Saved withdrawal history to {filename} ({len(df)} records)")
 
         # Return formatted response
-        return format_csv_response(filepath, df)
+        result = format_csv_response(filepath, df)
+
+        # Log the request for audit trail
+        log_request(
+            requests_dir=requests_dir,
+            requester=requester,
+            tool_name="binance_get_withdrawal_history",
+            input_params={"coin": coin, "status": status, "start_time": start_time, "end_time": end_time, "limit": limit},
+            output_result=result
+        )
+
+        return result

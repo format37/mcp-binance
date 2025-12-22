@@ -3,6 +3,7 @@ from datetime import datetime
 from decimal import Decimal
 import uuid
 from mcp_service import format_csv_response
+from request_logger import log_request
 import pandas as pd
 from binance.client import Client
 from typing import Optional
@@ -221,10 +222,10 @@ def close_futures_position(binance_client: Client, symbol: str, position_side: s
         raise
 
 
-def register_binance_manage_futures_positions(local_mcp_instance, local_binance_client, csv_dir):
+def register_binance_manage_futures_positions(local_mcp_instance, local_binance_client, csv_dir, requests_dir):
     """Register the binance_manage_futures_positions tool"""
     @local_mcp_instance.tool()
-    def binance_manage_futures_positions(symbol: Optional[str] = None,
+    def binance_manage_futures_positions(requester: str, symbol: Optional[str] = None,
                                          close_position: bool = False,
                                          position_side: str = 'BOTH') -> str:
         """
@@ -238,6 +239,7 @@ def register_binance_manage_futures_positions(local_mcp_instance, local_binance_
         and be aware of liquidation prices, especially in volatile markets.
 
         Parameters:
+            requester (string, required): Name of the requester making this call (for request logging)
             symbol (string, optional): Trading pair symbol (e.g., 'BTCUSDT')
                 - If provided: Shows/closes only this symbol's position
                 - If omitted: Shows all open positions (when close_position=False)
@@ -354,7 +356,7 @@ def register_binance_manage_futures_positions(local_mcp_instance, local_binance_
             - CSV saved for position tracking and analysis
             - Use with binance_calculate_liquidation_risk for detailed risk analysis
         """
-        logger.info(f"binance_manage_futures_positions tool invoked")
+        logger.info(f"binance_manage_futures_positions tool invoked by {requester}")
 
         try:
             if close_position:
@@ -374,6 +376,19 @@ def register_binance_manage_futures_positions(local_mcp_instance, local_binance_
                 logger.info(f"Saved position closure to {filename}")
 
                 result = format_csv_response(filepath, df)
+
+                # Log request
+                log_request(
+                    requests_dir=requests_dir,
+                    requester=requester,
+                    tool_name="binance_manage_futures_positions",
+                    input_params={
+                        "symbol": symbol,
+                        "close_position": close_position,
+                        "position_side": position_side
+                    },
+                    output_result=result
+                )
 
                 close_data = df.iloc[0]
                 summary = f"""
@@ -423,6 +438,19 @@ Check account balance:
                 logger.info(f"Saved positions to {filename}")
 
                 result = format_csv_response(filepath, df)
+
+                # Log request
+                log_request(
+                    requests_dir=requests_dir,
+                    requester=requester,
+                    tool_name="binance_manage_futures_positions",
+                    input_params={
+                        "symbol": symbol,
+                        "close_position": close_position,
+                        "position_side": position_side
+                    },
+                    output_result=result
+                )
 
                 if df.empty:
                     summary = f"""

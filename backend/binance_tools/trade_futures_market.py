@@ -3,6 +3,7 @@ from datetime import datetime
 from decimal import Decimal
 import uuid
 from mcp_service import format_csv_response
+from request_logger import log_request
 import pandas as pd
 from binance.client import Client
 from sentry_utils import with_sentry_tracing
@@ -133,10 +134,10 @@ def execute_futures_market_order(binance_client: Client, symbol: str, side: str,
         raise
 
 
-def register_binance_trade_futures_market(local_mcp_instance, local_binance_client, csv_dir):
+def register_binance_trade_futures_market(local_mcp_instance, local_binance_client, csv_dir, requests_dir):
     """Register the binance_trade_futures_market tool"""
     @local_mcp_instance.tool()
-    def binance_trade_futures_market(symbol: str, side: str, quantity: float,
+    def binance_trade_futures_market(requester: str, symbol: str, side: str, quantity: float,
                                      position_side: str = 'BOTH', close_position: bool = False) -> str:
         """
         Execute futures market order with leverage and save execution details to CSV.
@@ -147,6 +148,7 @@ def register_binance_trade_futures_market(local_mcp_instance, local_binance_clie
         ALWAYS use stop-loss orders and monitor liquidation prices.
 
         Parameters:
+            requester (string, required): Identifier of the user/system making the request
             symbol (string, required): Trading pair symbol (e.g., 'BTCUSDT', 'ETHUSDT')
             side (string, required): Order side - 'BUY' or 'SELL'
             quantity (float, required): Amount of contracts to trade
@@ -229,7 +231,7 @@ def register_binance_trade_futures_market(local_mcp_instance, local_binance_clie
             - Calculate risk with binance_calculate_liquidation_risk
             - This operation is irreversible once executed
         """
-        logger.info(f"binance_trade_futures_market tool invoked: {side} {symbol}")
+        logger.info(f"binance_trade_futures_market tool invoked: {side} {symbol} by {requester}")
 
         if not symbol or not side:
             return "Error: symbol and side are required"
@@ -294,6 +296,20 @@ Leverage:          {order_data['leverage']}x
                         summary += "⚠️  WARNING: High liquidation risk!\n"
 
             summary += "═══════════════════════════════════════════════════════════════════════════════\n"
+
+            log_request(
+                requests_dir=requests_dir,
+                requester=requester,
+                tool_name="binance_trade_futures_market",
+                input_params={
+                    "symbol": symbol,
+                    "side": side,
+                    "quantity": quantity,
+                    "position_side": position_side,
+                    "close_position": close_position
+                },
+                output_result=result + summary
+            )
 
             return result + summary
 

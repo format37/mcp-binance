@@ -3,6 +3,7 @@ from datetime import datetime
 from decimal import Decimal
 import uuid
 from mcp_service import format_csv_response
+from request_logger import log_request
 import pandas as pd
 from binance.client import Client
 from typing import Optional
@@ -149,16 +150,20 @@ def execute_market_order(binance_client: Client, symbol: str, side: str,
         raise
 
 
-def register_binance_spot_market_order(local_mcp_instance, local_binance_client, csv_dir):
+def register_binance_spot_market_order(local_mcp_instance, local_binance_client, csv_dir, requests_dir):
     """Register the binance_spot_market_order tool"""
     @local_mcp_instance.tool()
-    def binance_spot_market_order(symbol: str, side: str, quantity: float = None, quote_quantity: float = None) -> str:
+    def binance_spot_market_order(requester: str, symbol: str, side: str, quantity: float = None, quote_quantity: float = None) -> str:
         """
         Execute a market order on Binance spot market and save execution details to CSV.
 
         ⚠️  WARNING: THIS EXECUTES REAL TRADES WITH REAL MONEY ⚠️
         Market orders execute IMMEDIATELY at the current market price. Use with caution and
         always verify parameters before execution. This operation cannot be undone.
+
+        Parameters:
+            requester (str): Identifier of who is calling this tool (e.g., 'trading-agent', 'user-alex').
+                Used for request logging and audit purposes.
 
         Parameters:
             symbol (string, required): Trading pair symbol (e.g., 'BTCUSDT', 'ETHUSDT')
@@ -287,7 +292,18 @@ Time:            {order_data['transactTime']}
 ═══════════════════════════════════════════════════════════════════════════════
 """
 
-            return result + summary
+            final_result = result + summary
+
+            # Log the request for audit trail
+            log_request(
+                requests_dir=requests_dir,
+                requester=requester,
+                tool_name="binance_spot_market_order",
+                input_params={"symbol": symbol, "side": side, "quantity": quantity, "quote_quantity": quote_quantity},
+                output_result=final_result
+            )
+
+            return final_result
 
         except ValueError as e:
             logger.error(f"Validation error: {e}")

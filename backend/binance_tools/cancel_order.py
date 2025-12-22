@@ -2,6 +2,7 @@ import logging
 from datetime import datetime
 import uuid
 from mcp_service import format_csv_response
+from request_logger import log_request
 import pandas as pd
 from binance.client import Client
 from typing import Optional
@@ -112,10 +113,10 @@ def cancel_order_operation(binance_client: Client, symbol: str, order_id: Option
         raise
 
 
-def register_binance_cancel_order(local_mcp_instance, local_binance_client, csv_dir):
+def register_binance_cancel_order(local_mcp_instance, local_binance_client, csv_dir, requests_dir):
     """Register the binance_cancel_order tool"""
     @local_mcp_instance.tool()
-    def binance_cancel_order(symbol: str, order_id: int = None, order_list_id: int = None, cancel_all: bool = False) -> str:
+    def binance_cancel_order(requester: str, symbol: str, order_id: int = None, order_list_id: int = None, cancel_all: bool = False) -> str:
         """
         Cancel one or more orders on Binance spot market and save cancellation details to CSV.
 
@@ -127,6 +128,7 @@ def register_binance_cancel_order(local_mcp_instance, local_binance_client, csv_
         Cancelled orders cannot be restored. Make sure you're cancelling the correct order(s).
 
         Parameters:
+            requester (string, required): Name/ID of the user making the request
             symbol (string, required): Trading pair symbol (e.g., 'BTCUSDT', 'ETHUSDT')
             order_id (integer, optional): Specific order ID to cancel (get from binance_get_open_orders)
             order_list_id (integer, optional): OCO order list ID to cancel entire OCO order
@@ -220,7 +222,7 @@ def register_binance_cancel_order(local_mcp_instance, local_binance_client, csv_
             - CSV file saved for audit trail and record keeping
             - Can be used to implement order modification (cancel + new order)
         """
-        logger.info(f"binance_cancel_order tool invoked for {symbol}")
+        logger.info(f"binance_cancel_order tool invoked for {symbol} by {requester}")
 
         # Validate parameters
         if not symbol:
@@ -252,8 +254,23 @@ def register_binance_cancel_order(local_mcp_instance, local_binance_client, csv_
             df.to_csv(filepath, index=False)
             logger.info(f"Saved cancellation to {filename}")
 
+            # Log the request
             # Return formatted response
             result = format_csv_response(filepath, df)
+
+            # Log request
+            log_request(
+                requests_dir=requests_dir,
+                requester=requester,
+                tool_name='binance_cancel_order',
+                input_params={
+                    'symbol': symbol,
+                    'order_id': order_id,
+                    'order_list_id': order_list_id,
+                    'cancel_all': cancel_all
+                },
+                output_result=result
+            )
 
             # Add cancellation summary to response
             cancel_data = df.iloc[0]

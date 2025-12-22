@@ -2,6 +2,7 @@ import logging
 from datetime import datetime
 import uuid
 from mcp_service import format_csv_response
+from request_logger import log_request
 import pandas as pd
 from binance.client import Client
 from typing import Optional
@@ -103,10 +104,10 @@ def fetch_trade_history(binance_client: Client, symbol: str, start_time: Optiona
         raise
 
 
-def register_binance_spot_trade_history(local_mcp_instance, local_binance_client, csv_dir):
+def register_binance_spot_trade_history(local_mcp_instance, local_binance_client, csv_dir, requests_dir):
     """Register the binance_spot_trade_history tool"""
     @local_mcp_instance.tool()
-    def binance_spot_trade_history(symbol: str, start_time: int = None, end_time: int = None, limit: int = 500) -> str:
+    def binance_spot_trade_history(requester: str, symbol: str, start_time: int = None, end_time: int = None, limit: int = 500) -> str:
         """
         Fetch historical trade data for profit/loss analysis and save to CSV file.
 
@@ -115,6 +116,8 @@ def register_binance_spot_trade_history(local_mcp_instance, local_binance_client
         CSV for detailed P&L analysis using the py_eval tool.
 
         Parameters:
+            requester (str): Identifier of who is calling this tool (e.g., 'trading-agent', 'user-alex').
+                Used for request logging and audit purposes.
             symbol (string, required): Trading pair symbol (e.g., 'BTCUSDT', 'ETHUSDT')
             start_time (integer, optional): Start timestamp in milliseconds. If provided, only trades
                 after this time are returned. Example: 1640995200000 (Jan 1, 2022 00:00:00 UTC)
@@ -183,7 +186,7 @@ def register_binance_spot_trade_history(local_mcp_instance, local_binance_client
             - Results are sorted by time (most recent first)
             - Useful for tax reporting - consult with tax professional for official records
         """
-        logger.info(f"binance_spot_trade_history tool invoked for {symbol}")
+        logger.info(f"binance_spot_trade_history tool invoked by {requester} for {symbol}")
 
         # Validate limit
         if limit < 1 or limit > 1000:
@@ -215,4 +218,15 @@ def register_binance_spot_trade_history(local_mcp_instance, local_binance_client
         logger.info(f"Saved trade history to {filename} ({len(df)} trades)")
 
         # Return formatted response
-        return format_csv_response(filepath, df)
+        result = format_csv_response(filepath, df)
+
+        # Log the request for audit trail
+        log_request(
+            requests_dir=requests_dir,
+            requester=requester,
+            tool_name="binance_spot_trade_history",
+            input_params={"symbol": symbol, "start_time": start_time, "end_time": end_time, "limit": limit},
+            output_result=result
+        )
+
+        return result

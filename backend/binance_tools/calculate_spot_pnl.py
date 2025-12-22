@@ -4,6 +4,7 @@ from decimal import Decimal
 from collections import defaultdict
 import uuid
 from mcp_service import format_csv_response
+from request_logger import log_request
 import pandas as pd
 from binance.client import Client
 from typing import Optional
@@ -249,10 +250,10 @@ def calculate_spot_pnl(binance_client: Client, symbol: Optional[str] = None,
         raise
 
 
-def register_binance_calculate_spot_pnl(local_mcp_instance, local_binance_client, csv_dir):
+def register_binance_calculate_spot_pnl(local_mcp_instance, local_binance_client, csv_dir, requests_dir):
     """Register the binance_calculate_spot_pnl tool"""
     @local_mcp_instance.tool()
-    def binance_calculate_spot_pnl(symbol: Optional[str] = None, days: Optional[int] = None) -> str:
+    def binance_calculate_spot_pnl(requester: str, symbol: Optional[str] = None, days: Optional[int] = None) -> str:
         """
         Calculate profit/loss for spot trading by analyzing trade history and save to CSV.
 
@@ -263,6 +264,7 @@ def register_binance_calculate_spot_pnl(local_mcp_instance, local_binance_client
         ✓ READ-ONLY OPERATION - Completely safe to run anytime
 
         Parameters:
+            requester (string): The entity requesting this operation (e.g., 'user', 'claude', 'system')
             symbol (string, optional): Trading pair to analyze (e.g., 'BTCUSDT')
                 - If provided: Analyzes only this trading pair
                 - If omitted: Analyzes all traded pairs (recommended)
@@ -395,7 +397,7 @@ def register_binance_calculate_spot_pnl(local_mcp_instance, local_binance_client
             - CSV files saved for further analysis and record-keeping
             - Combine with portfolio tracking for comprehensive view
         """
-        logger.info(f"binance_calculate_spot_pnl tool invoked")
+        logger.info(f"binance_calculate_spot_pnl tool invoked by {requester}")
 
         try:
             # Calculate P&L
@@ -501,6 +503,15 @@ NET P&L:             ${summary['netPnl']:+,.2f}
             result += "- This is an estimate based on trade history\n"
             result += "- For tax purposes, consult with a qualified tax professional\n"
             result += "═══════════════════════════════════════════════════════════════════════════════\n"
+
+            # Log request
+            log_request(
+                requests_dir=requests_dir,
+                requester=requester,
+                tool_name="binance_calculate_spot_pnl",
+                input_params={"symbol": symbol, "days": days},
+                output_result=result
+            )
 
             return result
 

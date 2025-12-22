@@ -3,6 +3,7 @@ from datetime import datetime
 from decimal import Decimal
 import uuid
 from mcp_service import format_csv_response
+from request_logger import log_request
 import pandas as pd
 from binance.client import Client
 from sentry_utils import with_sentry_tracing
@@ -170,10 +171,10 @@ def fetch_futures_balances(binance_client: Client, use_cache: bool = True) -> tu
         raise
 
 
-def register_binance_get_futures_balances(local_mcp_instance, local_binance_client, csv_dir):
+def register_binance_get_futures_balances(local_mcp_instance, local_binance_client, csv_dir, requests_dir):
     """Register the binance_get_futures_balances tool"""
     @local_mcp_instance.tool()
-    def binance_get_futures_balances() -> str:
+    def binance_get_futures_balances(requester: str) -> str:
         """
         Fetch Binance futures account balance, margin, and open positions to CSV files.
 
@@ -184,6 +185,9 @@ def register_binance_get_futures_balances(local_mcp_instance, local_binance_clie
         ⚠️  FUTURES TRADING WARNING ⚠️
         Futures trading involves leverage and liquidation risk. Positions can result in losses
         exceeding your initial investment. Always monitor liquidation prices and margin ratios.
+
+        Parameters:
+            requester (string, required): Identifier of the user/system making the request
 
         Returns:
             str: Formatted response with two CSV files (account summary and positions), schema,
@@ -251,7 +255,7 @@ def register_binance_get_futures_balances(local_mcp_instance, local_binance_clie
             - Liquidation can occur if margin ratio becomes too high
             - Always monitor positions in volatile markets
         """
-        logger.info("binance_get_futures_balances tool invoked")
+        logger.info(f"binance_get_futures_balances tool invoked by {requester}")
 
         try:
             # Call fetch_futures_balances function
@@ -311,6 +315,14 @@ RISK ASSESSMENT
                     result += f"🚨 WARNING: {critical_positions} position(s) within 10% of liquidation!\n"
 
             result += "═══════════════════════════════════════════════════════════════════════════════\n"
+
+            log_request(
+                requests_dir=requests_dir,
+                requester=requester,
+                tool_name="binance_get_futures_balances",
+                input_params={},
+                output_result=result
+            )
 
             return result
 

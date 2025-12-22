@@ -2,6 +2,7 @@ import logging
 from datetime import datetime
 import uuid
 from mcp_service import format_csv_response
+from request_logger import log_request
 import pandas as pd
 from binance.client import Client
 from typing import Optional
@@ -94,10 +95,10 @@ def fetch_open_orders(binance_client: Client, symbol: Optional[str] = None) -> p
         raise
 
 
-def register_binance_get_open_orders(local_mcp_instance, local_binance_client, csv_dir):
+def register_binance_get_open_orders(local_mcp_instance, local_binance_client, csv_dir, requests_dir):
     """Register the binance_get_open_orders tool"""
     @local_mcp_instance.tool()
-    def binance_get_open_orders(symbol: str = None) -> str:
+    def binance_get_open_orders(requester: str, symbol: str = None) -> str:
         """
         Fetch all currently open orders from Binance and save to CSV file for analysis.
 
@@ -106,6 +107,8 @@ def register_binance_get_open_orders(local_mcp_instance, local_binance_client, c
         analysis using the py_eval tool.
 
         Parameters:
+            requester (str): Identifier of who is calling this tool (e.g., 'trading-agent', 'user-alex').
+                Used for request logging and audit purposes.
             symbol (string, optional): Trading pair symbol (e.g., 'BTCUSDT', 'ETHUSDT').
                 If not provided, returns all open orders across all trading pairs.
 
@@ -158,7 +161,7 @@ def register_binance_get_open_orders(local_mcp_instance, local_binance_client, c
             - OCO orders appear as two separate orders (limit order and stop order)
             - Results are sorted by creation time (most recent first)
         """
-        logger.info(f"binance_get_open_orders tool invoked{f' for {symbol}' if symbol else ''}")
+        logger.info(f"binance_get_open_orders tool invoked by {requester}{f' for {symbol}' if symbol else ''}")
 
         # Call fetch_open_orders function
         df = fetch_open_orders(binance_client=local_binance_client, symbol=symbol)
@@ -176,4 +179,15 @@ def register_binance_get_open_orders(local_mcp_instance, local_binance_client, c
         logger.info(f"Saved open orders to {filename} ({len(df)} orders)")
 
         # Return formatted response
-        return format_csv_response(filepath, df)
+        result = format_csv_response(filepath, df)
+
+        # Log the request for audit trail
+        log_request(
+            requests_dir=requests_dir,
+            requester=requester,
+            tool_name="binance_get_open_orders",
+            input_params={"symbol": symbol},
+            output_result=result
+        )
+
+        return result

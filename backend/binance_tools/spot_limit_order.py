@@ -3,6 +3,7 @@ from datetime import datetime
 from decimal import Decimal
 import uuid
 from mcp_service import format_csv_response
+from request_logger import log_request
 import pandas as pd
 from binance.client import Client
 from sentry_utils import with_sentry_tracing
@@ -127,10 +128,10 @@ def execute_limit_order(binance_client: Client, symbol: str, side: str,
         raise
 
 
-def register_binance_spot_limit_order(local_mcp_instance, local_binance_client, csv_dir):
+def register_binance_spot_limit_order(local_mcp_instance, local_binance_client, csv_dir, requests_dir):
     """Register the binance_spot_limit_order tool"""
     @local_mcp_instance.tool()
-    def binance_spot_limit_order(symbol: str, side: str, quantity: float, price: float, time_in_force: str = 'GTC') -> str:
+    def binance_spot_limit_order(requester: str, symbol: str, side: str, quantity: float, price: float, time_in_force: str = 'GTC') -> str:
         """
         Place a limit order on Binance spot market at a specific price and save details to CSV.
 
@@ -139,6 +140,7 @@ def register_binance_spot_limit_order(local_mcp_instance, local_binance_client, 
         parameters before execution. Orders may be cancelled if not filled.
 
         Parameters:
+            requester (string, required): Name or identifier of the user making this request
             symbol (string, required): Trading pair symbol (e.g., 'BTCUSDT', 'ETHUSDT')
             side (string, required): Order side - 'BUY' or 'SELL' (case-insensitive)
             quantity (float, required): Amount of base asset to trade (e.g., 0.001 for 0.001 BTC)
@@ -231,7 +233,7 @@ def register_binance_spot_limit_order(local_mcp_instance, local_binance_client, 
             - Commission automatically deducted when order fills
             - Check balance before placing orders to avoid rejection
         """
-        logger.info(f"binance_spot_limit_order tool invoked: {side} {quantity} {symbol} @ {price}")
+        logger.info(f"binance_spot_limit_order tool invoked by {requester}: {side} {quantity} {symbol} @ {price}")
 
         # Validate parameters
         if not symbol:
@@ -261,6 +263,15 @@ def register_binance_spot_limit_order(local_mcp_instance, local_binance_client, 
 
             # Return formatted response
             result = format_csv_response(filepath, df)
+
+            # Log the request
+            log_request(
+                requests_dir=requests_dir,
+                requester=requester,
+                tool_name="binance_spot_limit_order",
+                input_params={"symbol": symbol, "side": side, "quantity": quantity, "price": price, "time_in_force": time_in_force},
+                output_result=result
+            )
 
             # Add execution summary to response
             order_data = df.iloc[0]

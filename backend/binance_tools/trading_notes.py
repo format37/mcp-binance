@@ -1,12 +1,13 @@
 import logging
 from datetime import datetime
 import pathlib
+from request_logger import log_request
 from sentry_utils import with_sentry_tracing
 
 logger = logging.getLogger(__name__)
 
 
-def register_trading_notes(local_mcp_instance, csv_dir):
+def register_trading_notes(local_mcp_instance, csv_dir, requests_dir):
     """Register trading notes tools for long-term strategy memory"""
 
     # Create trading_notes directory
@@ -18,7 +19,7 @@ def register_trading_notes(local_mcp_instance, csv_dir):
 
     @local_mcp_instance.tool()
     @with_sentry_tracing("read_trading_notes")
-    def read_trading_notes() -> str:
+    def read_trading_notes(requester: str) -> str:
         """
         Read current trading strategy and session notes.
 
@@ -36,6 +37,9 @@ def register_trading_notes(local_mcp_instance, csv_dir):
         - What market conditions are being monitored
         - What decisions are pending
         - What mistakes to avoid based on past experience
+
+        Parameters:
+            requester (string): The entity requesting this operation (e.g., 'user', 'claude', 'system')
 
         Returns:
             str: Full markdown content of trading notes, or a message if no notes exist
@@ -56,7 +60,7 @@ def register_trading_notes(local_mcp_instance, csv_dir):
             - If no notes exist, returns instructions to create the first note
             - This is the first tool to call when starting a new trading session
         """
-        logger.info("read_trading_notes tool invoked")
+        logger.info(f"read_trading_notes tool invoked by {requester}")
 
         try:
             # Check if notes file exists
@@ -78,6 +82,15 @@ Consider including:
 
             logger.info(f"Read {len(content)} characters from trading notes")
 
+            # Log request
+            log_request(
+                requests_dir=requests_dir,
+                requester=requester,
+                tool_name="read_trading_notes",
+                input_params={},
+                output_result=content
+            )
+
             return content
 
         except Exception as e:
@@ -86,7 +99,7 @@ Consider including:
 
     @local_mcp_instance.tool()
     @with_sentry_tracing("update_trading_notes")
-    def update_trading_notes(markdown_content: str, append: bool = False) -> str:
+    def update_trading_notes(requester: str, markdown_content: str, append: bool = False) -> str:
         """
         Update trading strategy and session notes by REWRITING the entire document.
 
@@ -107,6 +120,7 @@ Consider including:
         sessions can be omitted to keep the document focused and manageable.
 
         Parameters:
+            requester (string): The entity requesting this operation (e.g., 'user', 'claude', 'system')
             markdown_content (str): Complete markdown strategy document. Must include:
                 - ALL active positions with rationale and exit criteria
                 - Current trading strategy and market outlook
@@ -179,7 +193,7 @@ Consider including:
             - Only retain significant, actionable information
             - Use markdown formatting for readability
         """
-        logger.info(f"update_trading_notes tool invoked (append={append})")
+        logger.info(f"update_trading_notes tool invoked by {requester} (append={append})")
 
         try:
             # Ensure directory exists (defensive check)
@@ -196,7 +210,7 @@ Consider including:
 
                 logger.info(f"Appended {len(markdown_content)} characters to trading notes")
 
-                return f"""✓ Trading notes updated successfully
+                result = f"""✓ Trading notes updated successfully
 
 Mode: Appended to existing notes
 Timestamp: {timestamp}
@@ -204,6 +218,17 @@ File: trading_notes/strategy.md
 Content size: {len(markdown_content)} characters
 
 Use read_trading_notes() to view the complete strategy document."""
+
+                # Log request
+                log_request(
+                    requests_dir=requests_dir,
+                    requester=requester,
+                    tool_name="update_trading_notes",
+                    input_params={"append": append, "content_length": len(markdown_content)},
+                    output_result=result
+                )
+
+                return result
 
             else:
                 # Create or replace entire file
@@ -216,7 +241,7 @@ Use read_trading_notes() to view the complete strategy document."""
                 mode = "Created new" if not trading_notes_file.exists() else "Replaced"
                 logger.info(f"{mode} trading notes file with {len(full_content)} characters")
 
-                return f"""✓ Trading notes {mode.lower()} successfully
+                result = f"""✓ Trading notes {mode.lower()} successfully
 
 Mode: {mode} strategy document
 Timestamp: {timestamp}
@@ -224,6 +249,17 @@ File: trading_notes/strategy.md
 Content size: {len(markdown_content)} characters
 
 Use read_trading_notes() to view the strategy document."""
+
+                # Log request
+                log_request(
+                    requests_dir=requests_dir,
+                    requester=requester,
+                    tool_name="update_trading_notes",
+                    input_params={"append": append, "content_length": len(markdown_content)},
+                    output_result=result
+                )
+
+                return result
 
         except Exception as e:
             logger.error(f"Error updating trading notes: {e}")

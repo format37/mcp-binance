@@ -2,6 +2,7 @@ import logging
 from decimal import Decimal
 import uuid
 from mcp_service import format_csv_response
+from request_logger import log_request
 import pandas as pd
 from binance.client import Client
 from sentry_utils import with_sentry_tracing
@@ -51,10 +52,10 @@ def fetch_price(binance_client: Client, symbol: str = 'BTCUSDT') -> pd.DataFrame
     return df
 
 
-def register_binance_get_price(local_mcp_instance, local_binance_client, csv_dir):
+def register_binance_get_price(local_mcp_instance, local_binance_client, csv_dir, requests_dir):
     """Register the binance_get_price tool"""
     @local_mcp_instance.tool()
-    def binance_get_price(symbol: str = 'BTCUSDT') -> str:
+    def binance_get_price(requester: str, symbol: str = 'BTCUSDT') -> str:
         """
         Fetch current price for a trading symbol and save to CSV file for analysis.
 
@@ -62,6 +63,8 @@ def register_binance_get_price(local_mcp_instance, local_binance_client, csv_dir
         Perfect for quick price checks when you don't need comprehensive market statistics.
 
         Parameters:
+            requester (str): Identifier of who is calling this tool (e.g., 'trading-agent', 'user-alex').
+                Used for request logging and audit purposes.
             symbol (str): Trading pair symbol (default: 'BTCUSDT')
                 Examples: 'BTCUSDT', 'ETHUSDT', 'BNBUSDT', 'ADAUSDT', 'SOLUSDT'
 
@@ -122,7 +125,7 @@ def register_binance_get_price(local_mcp_instance, local_binance_client, csv_dir
             including volume, 24h change, and other statistics, use binance_get_ticker.
             Data is READ-ONLY and does not execute any trades.
         """
-        logger.info(f"binance_get_price tool invoked for symbol: {symbol}")
+        logger.info(f"binance_get_price tool invoked by {requester} for symbol: {symbol}")
 
         # Call fetch_price function
         df = fetch_price(binance_client=local_binance_client, symbol=symbol)
@@ -136,4 +139,15 @@ def register_binance_get_price(local_mcp_instance, local_binance_client, csv_dir
         logger.info(f"Saved price data to {filename} for {symbol}")
 
         # Return formatted response
-        return format_csv_response(filepath, df)
+        result = format_csv_response(filepath, df)
+
+        # Log the request for audit trail
+        log_request(
+            requests_dir=requests_dir,
+            requester=requester,
+            tool_name="binance_get_price",
+            input_params={"symbol": symbol},
+            output_result=result
+        )
+
+        return result
