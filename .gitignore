@@ -5,3 +5,4 @@ backend/__pycache__/
 backend/binance_tools/__pycache__/
 examples/
 data/
+logging-tech-specs.md

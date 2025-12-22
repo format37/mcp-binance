@@ -17,7 +17,7 @@ from starlette.staticfiles import StaticFiles
 from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
 from binance.client import Client
-from mcp_service import register_py_eval, register_tool_notes
+from mcp_service import register_py_eval, register_tool_notes, register_request_log
 from mcp_resources import register_mcp_resources
 from binance_tools.get_account import register_binance_get_account
 from binance_tools.get_ticker import register_binance_get_ticker
@@ -226,6 +226,7 @@ register_binance_portfolio_performance(mcp, binance_client, CSV_DIR, REQUESTS_DI
 register_trading_notes(mcp, CSV_DIR, REQUESTS_DIR)
 register_py_eval(mcp, CSV_DIR, REQUESTS_DIR)
 register_tool_notes(mcp, CSV_DIR, REQUESTS_DIR)
+register_request_log(mcp, CSV_DIR, REQUESTS_DIR)
 
 # Add custom error handling for stream disconnections
 original_logger = logging.getLogger("mcp.server.streamable_http")
