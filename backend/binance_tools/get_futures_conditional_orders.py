@@ -38,8 +38,8 @@ def fetch_futures_conditional_orders(binance_client: Client, symbol: Optional[st
             params['symbol'] = symbol
 
         # Direct API call to the Algo Service endpoint
-        # python-binance may not have this endpoint yet, so we use _request directly
-        orders = binance_client._request('get', 'fapi/v1/openAlgoOrders', signed=True, data=params)
+        # python-binance may not have this endpoint yet, so we use _request_futures_api
+        orders = binance_client._request_futures_api('get', 'openAlgoOrders', signed=True, data=params)
 
         records = []
         for order in orders:
