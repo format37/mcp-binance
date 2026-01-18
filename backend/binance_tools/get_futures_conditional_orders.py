@@ -43,31 +43,35 @@ def fetch_futures_conditional_orders(binance_client: Client, symbol: Optional[st
 
         records = []
         for order in orders:
+            # Map Algo Service response fields to our standard format
+            # Algo Service uses: algoId, orderType, triggerPrice, algoStatus, createTime, clientAlgoId
             records.append({
-                'algoId': order.get('algoId', order.get('orderId', '')),
-                'orderId': order.get('orderId', ''),
-                'clientOrderId': order.get('clientOrderId', ''),
+                'algoId': order.get('algoId', ''),
+                'clientAlgoId': order.get('clientAlgoId', ''),
                 'symbol': order['symbol'],
                 'side': order['side'],
                 'positionSide': order.get('positionSide', 'BOTH'),
-                'type': order['type'],  # STOP_MARKET, TAKE_PROFIT_MARKET, TRAILING_STOP_MARKET
-                'stopPrice': float(order.get('stopPrice', 0)),
-                'activatePrice': float(order.get('activatePrice', 0)),
-                'priceRate': float(order.get('priceRate', order.get('callbackRate', 0))),
-                'origQty': float(order.get('origQty', 0)),
-                'executedQty': float(order.get('executedQty', 0)),
-                'status': order.get('status', 'NEW'),
+                'orderType': order.get('orderType', ''),  # TAKE_PROFIT_MARKET, STOP_MARKET, TRAILING_STOP_MARKET
+                'algoType': order.get('algoType', 'CONDITIONAL'),
+                'triggerPrice': float(order.get('triggerPrice', 0)),
+                'price': float(order.get('price', 0)),
+                'quantity': float(order.get('quantity', 0)),
+                'actualQty': float(order.get('actualQty', 0)),
+                'algoStatus': order.get('algoStatus', 'NEW'),
                 'reduceOnly': order.get('reduceOnly', False),
                 'closePosition': order.get('closePosition', False),
                 'workingType': order.get('workingType', 'MARK_PRICE'),
-                'time': datetime.fromtimestamp(order['time'] / 1000).strftime('%Y-%m-%d %H:%M:%S') if order.get('time') else '',
+                'priceProtect': order.get('priceProtect', False),
+                'timeInForce': order.get('timeInForce', ''),
+                'createTime': datetime.fromtimestamp(order['createTime'] / 1000).strftime('%Y-%m-%d %H:%M:%S') if order.get('createTime') else '',
                 'updateTime': datetime.fromtimestamp(order['updateTime'] / 1000).strftime('%Y-%m-%d %H:%M:%S') if order.get('updateTime') else ''
             })
 
         df = pd.DataFrame(records) if records else pd.DataFrame(columns=[
-            'algoId', 'orderId', 'clientOrderId', 'symbol', 'side', 'positionSide', 'type',
-            'stopPrice', 'activatePrice', 'priceRate', 'origQty', 'executedQty', 'status',
-            'reduceOnly', 'closePosition', 'workingType', 'time', 'updateTime'
+            'algoId', 'clientAlgoId', 'symbol', 'side', 'positionSide', 'orderType',
+            'algoType', 'triggerPrice', 'price', 'quantity', 'actualQty', 'algoStatus',
+            'reduceOnly', 'closePosition', 'workingType', 'priceProtect', 'timeInForce',
+            'createTime', 'updateTime'
         ])
 
         logger.info(f"Retrieved {len(records)} conditional futures orders")
@@ -103,26 +107,27 @@ def register_binance_get_futures_conditional_orders(local_mcp_instance, local_bi
             str: Formatted response with CSV file containing conditional orders.
 
         CSV Output Columns:
-            - algoId (integer): Algo order identifier
-            - orderId (integer): Order identifier
-            - clientOrderId (string): Client-assigned order ID
+            - algoId (integer): Algo order identifier (use for cancellation)
+            - clientAlgoId (string): Client-assigned algo order ID
             - symbol (string): Trading pair (e.g., 'BTCUSDT')
             - side (string): Order side (BUY or SELL)
             - positionSide (string): BOTH, LONG, or SHORT
-            - type (string): Order type:
+            - orderType (string): Order type:
                 - STOP_MARKET: Stop-loss order
                 - TAKE_PROFIT_MARKET: Take-profit order
                 - TRAILING_STOP_MARKET: Trailing stop order
-            - stopPrice (float): Trigger price for stop/TP orders
-            - activatePrice (float): Activation price for trailing stops
-            - priceRate (float): Callback rate for trailing stops (percentage)
-            - origQty (float): Original order quantity (0 if closePosition=True)
-            - executedQty (float): Quantity executed (0 for pending orders)
-            - status (string): Order status (NEW, FILLED, CANCELED)
+            - algoType (string): Algorithm type (CONDITIONAL for TP/SL orders)
+            - triggerPrice (float): Trigger price for stop/TP orders
+            - price (float): Limit price (0 for market orders)
+            - quantity (float): Order quantity (0 if closePosition=True)
+            - actualQty (float): Actual quantity executed
+            - algoStatus (string): Order status (NEW, TRIGGERED, FILLED, CANCELLED)
             - reduceOnly (boolean): True if order only reduces position
             - closePosition (boolean): True if order closes entire position
             - workingType (string): Price type (MARK_PRICE or CONTRACT_PRICE)
-            - time (string): Order creation timestamp
+            - priceProtect (boolean): True if price protection enabled
+            - timeInForce (string): Time in force (GTE_GTC for algo orders)
+            - createTime (string): Order creation timestamp
             - updateTime (string): Last update timestamp
 
         Order Types Explained:
@@ -236,7 +241,7 @@ To check basic orders (LIMIT, MARKET):
 
             # Calculate summary statistics
             total_orders = len(df)
-            by_type = df['type'].value_counts().to_dict()
+            by_type = df['orderType'].value_counts().to_dict()
             by_symbol = df['symbol'].value_counts().to_dict()
             close_position_count = len(df[df['closePosition'] == True])
 
@@ -262,22 +267,17 @@ By Order Type:
             # List order details
             summary += "\nOrder Details:\n"
             for _, row in df.iterrows():
-                order_type = row['type'].replace('_MARKET', '')
-                if row['type'] == 'TRAILING_STOP_MARKET':
-                    trigger_info = f"Trail {row['priceRate']}%"
-                    if row['activatePrice'] > 0:
-                        trigger_info += f" (activate @ {row['activatePrice']})"
-                else:
-                    trigger_info = f"@ {row['stopPrice']}"
+                order_type_display = row['orderType'].replace('_MARKET', '')
+                trigger_info = f"@ {row['triggerPrice']}"
 
-                qty_info = "CLOSE ALL" if row['closePosition'] else f"Qty: {row['origQty']}"
-                summary += f"  {row['symbol']} {row['side']} {order_type} {trigger_info} [{qty_info}]\n"
+                qty_info = "CLOSE ALL" if row['closePosition'] else f"Qty: {row['quantity']}"
+                summary += f"  {row['symbol']} {row['side']} {order_type_display} {trigger_info} [{qty_info}]\n"
 
             summary += """
 ═══════════════════════════════════════════════════════════════════════════════
 
 To cancel a conditional order:
-  binance_cancel_futures_order(symbol="SYMBOL", order_id=ORDER_ID)
+  binance_cancel_futures_order(symbol="SYMBOL", order_id=ALGO_ID)
 
 To check basic orders (LIMIT, MARKET):
   binance_get_futures_open_orders()
