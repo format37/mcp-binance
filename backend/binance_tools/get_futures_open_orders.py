@@ -78,10 +78,15 @@ def register_binance_get_futures_open_orders(local_mcp_instance, local_binance_c
     @local_mcp_instance.tool()
     def binance_get_futures_open_orders(requester: str, symbol: Optional[str] = None) -> str:
         """
-        Fetch all open futures orders and save to CSV for analysis.
+        Fetch open BASIC futures orders (LIMIT, MARKET) and save to CSV for analysis.
 
-        This tool retrieves all pending futures orders that haven't been filled or cancelled yet.
-        Use it to monitor your active orders, check order status, and manage your trading strategy.
+        ⚠️  IMPORTANT: As of December 9, 2025, Binance separated orders into two endpoints:
+        - THIS TOOL: Basic orders (LIMIT, MARKET, STOP, TAKE_PROFIT)
+        - binance_get_futures_conditional_orders(): Conditional orders (STOP_MARKET,
+          TAKE_PROFIT_MARKET, TRAILING_STOP_MARKET)
+
+        If you're looking for stop-loss or take-profit orders and don't see them here,
+        use binance_get_futures_conditional_orders() instead!
 
         ✓ READ-ONLY OPERATION - Safe to run anytime
 
@@ -151,10 +156,11 @@ def register_binance_get_futures_open_orders(local_mcp_instance, local_binance_c
             - Check for duplicate or conflicting orders
 
         Order Management Workflow:
-            1. Check open orders: binance_get_futures_open_orders()
-            2. Review order details and status
-            3. Cancel unwanted orders: binance_cancel_futures_order()
-            4. Place new orders if strategy changed
+            1. Check basic orders: binance_get_futures_open_orders()
+            2. Check conditional orders: binance_get_futures_conditional_orders()
+            3. Review order details and status
+            4. Cancel unwanted orders: binance_cancel_futures_order()
+            5. Place new orders if strategy changed
 
         When to Check Open Orders:
             - Before placing new orders (avoid conflicts)
@@ -173,8 +179,10 @@ def register_binance_get_futures_open_orders(local_mcp_instance, local_binance_c
             - Check regularly to avoid forgetting about old orders
 
         Related Tools:
+            - Conditional orders (TP/SL): binance_get_futures_conditional_orders()
             - Cancel orders: binance_cancel_futures_order(symbol, order_id)
             - Place limit order: binance_futures_limit_order(...)
+            - Place stop order: binance_futures_stop_order(...)
             - View positions: binance_manage_futures_positions()
             - Check account: binance_get_futures_balances()
 
@@ -212,15 +220,23 @@ def register_binance_get_futures_open_orders(local_mcp_instance, local_binance_c
                 summary = f"""
 
 ═══════════════════════════════════════════════════════════════════════════════
-NO OPEN FUTURES ORDERS
+NO OPEN BASIC FUTURES ORDERS
 ═══════════════════════════════════════════════════════════════════════════════
 """
                 if symbol:
-                    summary += f"No open orders found for {symbol}.\n"
+                    summary += f"No basic orders (LIMIT/MARKET) found for {symbol}.\n"
                 else:
-                    summary += "No open futures orders found.\n"
-                summary += "\nAll your orders have either been filled or cancelled.\n"
-                summary += "═══════════════════════════════════════════════════════════════════════════════\n"
+                    summary += "No basic futures orders (LIMIT/MARKET) found.\n"
+                summary += """
+💡 Looking for stop-loss or take-profit orders?
+   Use binance_get_futures_conditional_orders() instead!
+
+   Since December 2025, Binance serves conditional orders
+   (STOP_MARKET, TAKE_PROFIT_MARKET, TRAILING_STOP_MARKET)
+   from a separate endpoint.
+
+═══════════════════════════════════════════════════════════════════════════════
+"""
                 return result + summary
 
             # Calculate summary statistics
