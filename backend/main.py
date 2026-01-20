@@ -42,6 +42,7 @@ from binance_tools.futures_limit_order import register_binance_futures_limit_ord
 from binance_tools.get_futures_open_orders import register_binance_get_futures_open_orders
 from binance_tools.get_futures_conditional_orders import register_binance_get_futures_conditional_orders
 from binance_tools.cancel_futures_order import register_binance_cancel_futures_order
+from binance_tools.cancel_algo_order import register_binance_cancel_algo_order
 from binance_tools.get_futures_trade_history import register_binance_get_futures_trade_history
 from binance_tools.set_futures_leverage import register_binance_set_futures_leverage
 from binance_tools.manage_futures_positions import register_binance_manage_futures_positions
@@ -225,6 +226,7 @@ register_binance_futures_limit_order(mcp, binance_client, CSV_DIR, REQUESTS_DIR)
 register_binance_get_futures_open_orders(mcp, binance_client, CSV_DIR, REQUESTS_DIR)
 register_binance_get_futures_conditional_orders(mcp, binance_client, CSV_DIR, REQUESTS_DIR)
 register_binance_cancel_futures_order(mcp, binance_client, CSV_DIR, REQUESTS_DIR)
+register_binance_cancel_algo_order(mcp, binance_client, CSV_DIR, REQUESTS_DIR)
 register_binance_get_futures_trade_history(mcp, binance_client, CSV_DIR, REQUESTS_DIR)
 register_binance_set_futures_leverage(mcp, binance_client, CSV_DIR, REQUESTS_DIR)
 register_binance_manage_futures_positions(mcp, binance_client, CSV_DIR, REQUESTS_DIR)

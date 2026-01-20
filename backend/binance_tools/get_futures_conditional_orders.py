@@ -167,7 +167,7 @@ def register_binance_get_futures_conditional_orders(local_mcp_instance, local_bi
 
         Order Management:
             - Place stop orders: binance_futures_stop_order(...)
-            - Cancel order: binance_cancel_futures_order(symbol, order_id)
+            - Cancel algo order: binance_cancel_algo_order(symbol, algo_id)
             - View positions: binance_manage_futures_positions()
 
         Important Notes:
@@ -180,7 +180,7 @@ def register_binance_get_futures_conditional_orders(local_mcp_instance, local_bi
         Related Tools:
             - Basic orders: binance_get_futures_open_orders()
             - Place stop order: binance_futures_stop_order(...)
-            - Cancel order: binance_cancel_futures_order(symbol, order_id)
+            - Cancel algo order: binance_cancel_algo_order(symbol, algo_id)
             - View positions: binance_manage_futures_positions()
 
         Note:
@@ -277,7 +277,7 @@ By Order Type:
 ═══════════════════════════════════════════════════════════════════════════════
 
 To cancel a conditional order:
-  binance_cancel_futures_order(symbol="SYMBOL", order_id=ALGO_ID)
+  binance_cancel_algo_order(symbol="SYMBOL", algo_id=ALGO_ID)
 
 To check basic orders (LIMIT, MARKET):
   binance_get_futures_open_orders()
