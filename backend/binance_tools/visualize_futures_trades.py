@@ -158,6 +158,44 @@ def fetch_all_futures_trades(binance_client: Client, symbols: List[str], days: i
     return df
 
 
+@with_sentry_tracing("fetch_conditional_orders_for_symbol")
+def fetch_conditional_orders_for_symbol(binance_client: Client, symbol: str) -> Dict[str, Optional[float]]:
+    """
+    Fetch TP/SL conditional orders for a specific symbol.
+
+    Args:
+        binance_client: Initialized Binance Client
+        symbol: Trading pair symbol (e.g., 'MANAUSDT')
+
+    Returns:
+        Dictionary with 'tp_price' and 'sl_price' (None if not set)
+    """
+    logger.info(f"Fetching conditional orders for {symbol}")
+
+    result = {'tp_price': None, 'sl_price': None}
+
+    try:
+        # Use the Algo Service endpoint (same as get_futures_conditional_orders)
+        orders = binance_client._request_futures_api('get', 'openAlgoOrders', signed=True, data={'symbol': symbol})
+
+        for order in orders:
+            order_type = order.get('orderType', '')
+            trigger_price = float(order.get('triggerPrice', 0))
+
+            if trigger_price > 0:
+                if 'TAKE_PROFIT' in order_type:
+                    result['tp_price'] = trigger_price
+                elif 'STOP' in order_type and 'TRAILING' not in order_type:
+                    result['sl_price'] = trigger_price
+
+        logger.info(f"Conditional orders for {symbol}: TP={result['tp_price']}, SL={result['sl_price']}")
+        return result
+
+    except Exception as e:
+        logger.warning(f"Error fetching conditional orders for {symbol}: {e}")
+        return result
+
+
 @with_sentry_tracing("load_open_positions")
 def load_open_positions(binance_client: Client) -> pd.DataFrame:
     """
@@ -452,7 +490,13 @@ def fetch_klines_for_trade(binance_client: Client, trade: TradeVisualization, pa
 # PLOTTING FUNCTIONS
 # ============================================================================
 
-def plot_single_trade(trade: TradeVisualization, klines_df: pd.DataFrame, output_path: Path) -> None:
+def plot_single_trade(
+    trade: TradeVisualization,
+    klines_df: pd.DataFrame,
+    output_path: Path,
+    tp_price: Optional[float] = None,
+    sl_price: Optional[float] = None
+) -> None:
     """
     Generate a visualization plot for a single trade.
 
@@ -460,6 +504,8 @@ def plot_single_trade(trade: TradeVisualization, klines_df: pd.DataFrame, output
         trade: TradeVisualization object
         klines_df: DataFrame with OHLCV data
         output_path: Path to save the PNG file
+        tp_price: Take profit price level (optional)
+        sl_price: Stop loss price level (optional)
     """
     logger.info(f"Generating plot for {trade.asset} {trade.position_side} trade")
 
@@ -468,87 +514,154 @@ def plot_single_trade(trade: TradeVisualization, klines_df: pd.DataFrame, output
         return
 
     # Get asset color
-    asset_color = ASSET_COLORS.get(trade.asset, COLORS['primary'])
+    asset_color = ASSET_COLORS.get(trade.asset, COLORS['loss'])  # Default to red/loss color for price line
 
     # Create figure with dark theme
     fig, (ax1, ax2) = plt.subplots(2, 1, figsize=FIGURE_SIZE, dpi=DPI,
-                                     gridspec_kw={'height_ratios': [3, 1]})
+                                     gridspec_kw={'height_ratios': [3, 1]},
+                                     sharex=True)
     fig.patch.set_facecolor(COLORS['background'])
 
     for ax in [ax1, ax2]:
         ax.set_facecolor(COLORS['background'])
-        ax.tick_params(colors=COLORS['text'])
+        ax.tick_params(colors=COLORS['text'], labelsize=9)
         ax.xaxis.label.set_color(COLORS['text'])
         ax.yaxis.label.set_color(COLORS['text'])
         ax.title.set_color(COLORS['text'])
         for spine in ax.spines.values():
             spine.set_color(COLORS['grid'])
 
-    # Plot price line
-    ax1.plot(klines_df['timestamp'], klines_df['close'],
-             color=asset_color, linewidth=1.5, label='Price')
+    # Determine P&L color for the trade
+    pnl_value = trade.realized_pnl if not trade.is_open else trade.unrealized_pnl
+    pnl_color = COLORS['profit'] if (pnl_value or 0) >= 0 else COLORS['loss']
 
-    # Fill between high and low
-    ax1.fill_between(klines_df['timestamp'], klines_df['low'], klines_df['high'],
-                     alpha=0.2, color=asset_color)
+    # Plot price line with asset color
+    ax1.plot(klines_df['timestamp'], klines_df['close'],
+             color=asset_color, linewidth=1.5, label=f'{trade.asset} Price')
+
+    # Fill area between entry price and price line (shows profit/loss region)
+    # For LONG: profit when price > entry, loss when price < entry
+    # For SHORT: profit when price < entry, loss when price > entry
+    ax1.fill_between(
+        klines_df['timestamp'],
+        trade.entry_price,
+        klines_df['close'],
+        alpha=0.3,
+        color=pnl_color,
+        label='P&L Region'
+    )
+
+    # Plot entry horizontal line
+    entry_label = f"Entry: ${trade.entry_price:,.4f}"
+    ax1.axhline(y=trade.entry_price, color=COLORS['primary'], linestyle='--',
+                alpha=0.8, linewidth=2, label=entry_label)
+
+    # Plot entry VERTICAL line at entry time
+    ax1.axvline(x=trade.entry_time, color=COLORS['primary'], linestyle=':',
+                alpha=0.6, linewidth=1.5)
 
     # Plot entry marker
-    entry_label = f"Entry: ${trade.entry_price:,.2f}"
-    ax1.axhline(y=trade.entry_price, color=COLORS['primary'], linestyle='--',
-                alpha=0.7, linewidth=1.5, label=entry_label)
     ax1.scatter([trade.entry_time], [trade.entry_price], color=COLORS['primary'],
                 s=150, marker='^' if trade.position_side == 'LONG' else 'v',
                 zorder=5, edgecolors='white', linewidths=2)
 
+    # Plot Take Profit level if available
+    if tp_price and tp_price > 0:
+        ax1.axhline(y=tp_price, color=COLORS['profit'], linestyle='-.',
+                    alpha=0.8, linewidth=1.5, label=f"TP: ${tp_price:,.4f}")
+
+    # Plot Stop Loss level if available
+    if sl_price and sl_price > 0:
+        ax1.axhline(y=sl_price, color=COLORS['loss'], linestyle='-.',
+                    alpha=0.8, linewidth=1.5, label=f"SL: ${sl_price:,.4f}")
+
     # Plot exit marker (if closed)
     if not trade.is_open and trade.exit_time and trade.exit_price:
         exit_color = COLORS['profit'] if (trade.realized_pnl or 0) >= 0 else COLORS['loss']
-        exit_label = f"Exit: ${trade.exit_price:,.2f}"
+        exit_label = f"Exit: ${trade.exit_price:,.4f}"
         ax1.axhline(y=trade.exit_price, color=exit_color, linestyle='--',
                     alpha=0.7, linewidth=1.5, label=exit_label)
         ax1.scatter([trade.exit_time], [trade.exit_price], color=exit_color,
                     s=150, marker='x', zorder=5, linewidths=3)
 
-        # Shade the trade region
-        trade_start_idx = klines_df[klines_df['timestamp'] >= trade.entry_time].index.min()
-        trade_end_idx = klines_df[klines_df['timestamp'] <= trade.exit_time].index.max()
-
-        if pd.notna(trade_start_idx) and pd.notna(trade_end_idx):
-            trade_region = klines_df.loc[trade_start_idx:trade_end_idx]
-            ax1.fill_between(trade_region['timestamp'],
-                            ax1.get_ylim()[0], ax1.get_ylim()[1],
-                            alpha=0.1, color=exit_color)
+        # Add exit vertical line
+        ax1.axvline(x=trade.exit_time, color=exit_color, linestyle=':',
+                    alpha=0.6, linewidth=1.5)
     else:
-        # For open trades, show current price
+        # For open trades, show current price line
         current_price = klines_df['close'].iloc[-1]
-        pnl_color = COLORS['profit'] if (trade.unrealized_pnl or 0) >= 0 else COLORS['loss']
         ax1.axhline(y=current_price, color=pnl_color, linestyle=':',
-                    alpha=0.7, linewidth=1.5, label=f"Current: ${current_price:,.2f}")
+                    alpha=0.7, linewidth=1.5, label=f"Current: ${current_price:,.4f}")
 
     # Configure price axis
     ax1.set_ylabel('Price (USDT)', fontsize=12, fontweight='bold', color=COLORS['text'])
-    ax1.legend(loc='upper left', fontsize=10, facecolor=COLORS['background'],
+    ax1.legend(loc='upper left', fontsize=9, facecolor=COLORS['background'],
                edgecolor=COLORS['grid'], labelcolor=COLORS['text'])
     ax1.grid(True, alpha=0.3, color=COLORS['grid'], linestyle=':')
-    ax1.yaxis.set_major_formatter(plt.FuncFormatter(lambda x, p: f'${x:,.2f}'))
+    ax1.yaxis.set_major_formatter(plt.FuncFormatter(lambda x, p: f'${x:,.4f}'))
 
-    # Plot volume
-    colors = [COLORS['profit'] if klines_df['close'].iloc[i] >= klines_df['open'].iloc[i]
-              else COLORS['loss'] for i in range(len(klines_df))]
-    ax2.bar(klines_df['timestamp'], klines_df['volume'], color=colors, alpha=0.6, width=0.0005)
-    ax2.set_ylabel('Volume', fontsize=10, color=COLORS['text'])
+    # Add position badge in upper right
+    badge_color = COLORS['loss'] if trade.position_side == 'SHORT' else COLORS['profit']
+    badge_text = f"[{trade.position_side}]"
+    ax1.text(0.98, 0.92, badge_text, transform=ax1.transAxes, fontsize=14,
+             fontweight='bold', verticalalignment='top', horizontalalignment='right',
+             color=badge_color,
+             bbox=dict(boxstyle='round,pad=0.3', facecolor=COLORS['background'],
+                       edgecolor=badge_color, alpha=0.9))
+
+    # Plot volume with taker buy/sell separation (cleaner style like original)
+    if 'taker_buy_volume' in klines_df.columns:
+        # Calculate taker sell volume
+        taker_sell_volume = klines_df['volume'] - klines_df['taker_buy_volume']
+
+        # Calculate bar width based on time interval
+        if len(klines_df) > 1:
+            time_diff = (klines_df['timestamp'].iloc[1] - klines_df['timestamp'].iloc[0]).total_seconds()
+            bar_width = timedelta(seconds=time_diff * 0.8)
+        else:
+            bar_width = timedelta(minutes=5)
+
+        # Plot taker buy volume (green)
+        ax2.bar(klines_df['timestamp'], klines_df['taker_buy_volume'],
+                color=COLORS['profit'], alpha=0.7, width=bar_width, label='Taker Buy')
+
+        # Plot taker sell volume (red) stacked on top
+        ax2.bar(klines_df['timestamp'], taker_sell_volume,
+                bottom=klines_df['taker_buy_volume'],
+                color=COLORS['loss'], alpha=0.7, width=bar_width, label='Taker Sell')
+
+        ax2.legend(loc='upper left', fontsize=8, facecolor=COLORS['background'],
+                   edgecolor=COLORS['grid'], labelcolor=COLORS['text'])
+    else:
+        # Fallback: simple volume bars
+        colors = [COLORS['profit'] if klines_df['close'].iloc[i] >= klines_df['open'].iloc[i]
+                  else COLORS['loss'] for i in range(len(klines_df))]
+        if len(klines_df) > 1:
+            time_diff = (klines_df['timestamp'].iloc[1] - klines_df['timestamp'].iloc[0]).total_seconds()
+            bar_width = timedelta(seconds=time_diff * 0.8)
+        else:
+            bar_width = timedelta(minutes=5)
+        ax2.bar(klines_df['timestamp'], klines_df['volume'], color=colors, alpha=0.6, width=bar_width)
+
+    ax2.set_ylabel('Volume (USDT)', fontsize=10, color=COLORS['text'])
     ax2.grid(True, alpha=0.3, color=COLORS['grid'], linestyle=':')
 
-    # Format x-axis
-    ax2.xaxis.set_major_formatter(mdates.DateFormatter('%m/%d %H:%M'))
-    plt.xticks(rotation=45)
+    # Format x-axis with rotated datetime labels
+    ax2.xaxis.set_major_formatter(mdates.DateFormatter('%m-%d %H:%M'))
+    ax2.xaxis.set_major_locator(mdates.AutoDateLocator())
+    plt.setp(ax2.xaxis.get_majorticklabels(), rotation=45, ha='right', fontsize=8)
 
-    # Build title
+    # Build title with trade info
     if trade.is_open:
-        pnl_str = f"Unrealized P&L: ${trade.unrealized_pnl or 0:+,.2f}"
+        pnl_str = f"Unrealized: ${trade.unrealized_pnl or 0:+,.2f}"
         status_str = "OPEN"
+        pnl_pct = ""
+        if trade.entry_price > 0 and trade.unrealized_pnl is not None:
+            notional = trade.quantity * trade.entry_price
+            if notional > 0:
+                pnl_pct = f" ({(trade.unrealized_pnl / notional * 100):+.2f}%)"
     else:
-        pnl_str = f"Realized P&L: ${trade.realized_pnl or 0:+,.2f}"
+        pnl_str = f"Realized: ${trade.realized_pnl or 0:+,.2f}"
         lifetime_str = ""
         if trade.lifetime_minutes:
             if trade.lifetime_minutes < 60:
@@ -558,25 +671,37 @@ def plot_single_trade(trade: TradeVisualization, klines_df: pd.DataFrame, output
             else:
                 lifetime_str = f" ({trade.lifetime_minutes/1440:.1f}d)"
         status_str = f"CLOSED{lifetime_str}"
+        pnl_pct = ""
+        if trade.entry_price > 0 and trade.realized_pnl is not None:
+            notional = trade.quantity * trade.entry_price
+            if notional > 0:
+                pnl_pct = f" ({(trade.realized_pnl / notional * 100):+.2f}%)"
 
-    pnl_color = COLORS['profit'] if (trade.realized_pnl or trade.unrealized_pnl or 0) >= 0 else COLORS['loss']
+    # Format entry time for title
+    entry_time_str = trade.entry_time.strftime('%Y-%m-%d %H:%M') + " UTC"
+    current_price = klines_df['close'].iloc[-1]
 
-    title = f"{trade.asset} {trade.position_side} - {status_str}\n{pnl_str}"
-    ax1.set_title(title, fontsize=14, fontweight='bold', color=COLORS['text'], pad=15)
+    title = f"{trade.asset} {trade.position_side} Trade: {entry_time_str} - {status_str}\n"
+    title += f"Entry: ${trade.entry_price:,.4f}  |  {pnl_str}{pnl_pct}  |  Current: ${current_price:,.4f}"
+    ax1.set_title(title, fontsize=12, fontweight='bold', color=COLORS['text'], pad=15)
 
-    # Add trade info box
+    # Add trade info box in upper right (below badge)
     info_text = (
         f"Entry: {trade.entry_time.strftime('%Y-%m-%d %H:%M')}\n"
-        f"Entry Price: ${trade.entry_price:,.2f}\n"
+        f"Entry Price: ${trade.entry_price:,.4f}\n"
         f"Quantity: {trade.quantity:.4f}\n"
     )
+    if tp_price:
+        info_text += f"TP: ${tp_price:,.4f}\n"
+    if sl_price:
+        info_text += f"SL: ${sl_price:,.4f}\n"
     if not trade.is_open:
         info_text += f"Exit: {trade.exit_time.strftime('%Y-%m-%d %H:%M')}\n"
-        info_text += f"Exit Price: ${trade.exit_price:,.2f}\n"
+        info_text += f"Exit Price: ${trade.exit_price:,.4f}\n"
 
     props = dict(boxstyle='round', facecolor=COLORS['background'], alpha=0.9,
                  edgecolor=COLORS['grid'])
-    ax1.text(0.98, 0.98, info_text, transform=ax1.transAxes, fontsize=9,
+    ax1.text(0.98, 0.78, info_text, transform=ax1.transAxes, fontsize=8,
              verticalalignment='top', horizontalalignment='right',
              bbox=props, family='monospace', color=COLORS['text'])
 
@@ -720,12 +845,20 @@ def fetch_visualize_futures_trades(
         klines_df.to_csv(klines_csv_path, index=False)
         logger.info(f"Saved klines to {klines_csv_path.name}")
 
+    # Fetch conditional orders (TP/SL) for open positions
+    tp_price = None
+    sl_price = None
+    if selected_trade.is_open:
+        conditional_orders = fetch_conditional_orders_for_symbol(binance_client, selected_trade.symbol)
+        tp_price = conditional_orders.get('tp_price')
+        sl_price = conditional_orders.get('sl_price')
+
     # Generate visualization
     png_path = None
     if not klines_df.empty:
         entry_date_str = selected_trade.entry_time.strftime('%Y%m%d')
         png_path = csv_dir / f"trade_viz_{selected_trade.asset}_{entry_date_str}_{report_id}.png"
-        plot_single_trade(selected_trade, klines_df, png_path)
+        plot_single_trade(selected_trade, klines_df, png_path, tp_price=tp_price, sl_price=sl_price)
 
     return {
         'trades_csv_path': trades_csv_path,
