@@ -102,11 +102,14 @@ def execute_futures_stop_order(binance_client: Client, symbol: str, side: str,
         # Execute the order
         logger.warning(f"PLACING FUTURES {order_type}: {side} {symbol} position_side={position_side}")
         order = binance_client.futures_create_order(**params)
-        logger.info(f"Futures stop order placed. Order ID: {order['orderId']}, Status: {order['status']}")
+
+        # Handle both basic orders (orderId) and algo orders (algoId)
+        order_id = order.get('orderId') or order.get('algoId')
+        logger.info(f"Futures stop order placed. Order ID: {order_id}, Status: {order['status']}")
 
         # Build record with all relevant fields
         record = {
-            'orderId': order['orderId'],
+            'orderId': order_id,
             'symbol': order['symbol'],
             'side': order['side'],
             'positionSide': order['positionSide'],
@@ -260,8 +263,8 @@ def register_binance_futures_stop_order(local_mcp_instance, local_binance_client
             )
 
         Managing Orders:
-            - Check order status: binance_get_futures_open_orders(symbol="BTCUSDT")
-            - Cancel order: binance_cancel_futures_order(symbol="BTCUSDT", order_id=12345)
+            - Check order status: binance_get_futures_conditional_orders(symbol="BTCUSDT")
+            - Cancel order: binance_cancel_algo_order(symbol="BTCUSDT", algo_id=12345)
 
         Best Practices:
             - ALWAYS set stop-loss immediately after opening a position
@@ -366,10 +369,10 @@ Your conditional order is now active and waiting.
 It will execute when the {order_data['workingType'].replace('_', ' ').lower()} {trigger_condition}.
 
 To check order status:
-  binance_get_futures_open_orders(symbol="{order_data['symbol']}")
+  binance_get_futures_conditional_orders(symbol="{order_data['symbol']}")
 
 To cancel this order:
-  binance_cancel_futures_order(symbol="{order_data['symbol']}", order_id={order_data['orderId']})
+  binance_cancel_algo_order(symbol="{order_data['symbol']}", algo_id={order_data['orderId']})
 """
             elif order_data['status'] == 'FILLED':
                 summary += """
