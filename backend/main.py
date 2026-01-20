@@ -50,6 +50,7 @@ from binance_tools.calculate_spot_pnl import register_binance_calculate_spot_pnl
 from binance_tools.trading_notes import register_trading_notes
 from binance_tools.portfolio_performance import register_binance_portfolio_performance
 from binance_tools.futures_stop_order import register_binance_futures_stop_order
+from binance_tools.visualize_futures_trades import register_binance_visualize_futures_trades
 
 load_dotenv(".env")
 
@@ -231,6 +232,7 @@ register_binance_calculate_liquidation_risk(mcp, binance_client, CSV_DIR, REQUES
 register_binance_futures_stop_order(mcp, binance_client, CSV_DIR, REQUESTS_DIR)
 register_binance_calculate_spot_pnl(mcp, binance_client, CSV_DIR, REQUESTS_DIR)
 register_binance_portfolio_performance(mcp, binance_client, CSV_DIR, REQUESTS_DIR)
+register_binance_visualize_futures_trades(mcp, binance_client, CSV_DIR, REQUESTS_DIR)
 register_trading_notes(mcp, CSV_DIR, REQUESTS_DIR)
 register_py_eval(mcp, CSV_DIR, REQUESTS_DIR)
 register_tool_notes(mcp, CSV_DIR, REQUESTS_DIR)
